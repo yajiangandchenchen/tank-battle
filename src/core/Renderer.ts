@@ -10,7 +10,7 @@ import { Camera } from './Camera';
  * 渲染器类 - 封装 Canvas 2D 渲染上下文
  */
 export class Renderer {
-	private ctx: CanvasRenderingContext2D;
+	ctx: CanvasRenderingContext2D;
 	private canvas: HTMLCanvasElement;
 	private camera: Camera;
 	uiScale: number;
