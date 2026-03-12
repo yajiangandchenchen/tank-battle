@@ -67,6 +67,18 @@ export class Renderer {
 	}
 
 	/**
+	 * 描边圆形（世界坐标）
+	 */
+	strokeCircle(pos: Vector2, radius: number, color: string, lineWidth: number = 1): void {
+		const screenPos = this.camera.worldToScreen(pos);
+		this.ctx.strokeStyle = color;
+		this.ctx.lineWidth = lineWidth;
+		this.ctx.beginPath();
+		this.ctx.arc(screenPos.x, screenPos.y, radius, 0, Math.PI * 2);
+		this.ctx.stroke();
+	}
+
+	/**
 	 * 绘制线条（世界坐标）
 	 */
 	drawLine(from: Vector2, to: Vector2, color: string, lineWidth: number = 1): void {
