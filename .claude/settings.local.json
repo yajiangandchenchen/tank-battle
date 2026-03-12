@@ -1,17 +1,20 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(echo $CLAUDE_PLUGIN_ROOT)",
-      "Bash(\"C:\\\\Users\\\\dell\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\superpowers\\\\5.0.0\\\\lib\\\\brainstorm-server\\\\start-server.sh\" --project-dir \"/d/llm/mygame/tank-battle\")",
-      "WebSearch",
-      "mcp__plugin_playwright_playwright__browser_navigate",
-      "mcp__plugin_playwright_playwright__browser_snapshot",
-      "mcp__plugin_playwright_playwright__browser_close",
-      "Bash(git init:*)",
-      "Bash(git add:*)",
-      "Bash(npm init:*)",
-      "Bash(npm install:*)",
-      "Bash(timeout 5 npm run dev || true)"
-    ]
-  }
+	"permissions": {
+		"allow": [
+			"Bash(echo $CLAUDE_PLUGIN_ROOT)",
+			"Bash(\"C:\\\\Users\\\\dell\\\\.claude\\\\plugins\\\\cache\\\\claude-plugins-official\\\\superpowers\\\\5.0.0\\\\lib\\\\brainstorm-server\\\\start-server.sh\" --project-dir \"/d/llm/mygame/tank-battle\")",
+			"WebSearch",
+			"mcp__plugin_playwright_playwright__browser_navigate",
+			"mcp__plugin_playwright_playwright__browser_snapshot",
+			"mcp__plugin_playwright_playwright__browser_close",
+			"Bash(git init:*)",
+			"Bash(git add:*)",
+			"Bash(npm init:*)",
+			"Bash(npm install:*)",
+			"Bash(timeout 5 npm run dev || true)",
+			"Bash(git commit:*)",
+			"Bash(cd \"D:\\\\llm\\\\mygame\\\\tank-battle\" && npm run lint)",
+			"Bash(cd \"D:\\\\llm\\\\mygame\\\\tank-battle\" && npm run format)"
+		]
+	}
 }

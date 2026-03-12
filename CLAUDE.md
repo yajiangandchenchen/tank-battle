@@ -21,6 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 核心架构
 
 ### 文件结构
+
 ```
 tank-battle.html    # 主游戏文件（~2500 行）
 img/               # 背景图片资源（bg1.jpg - bg6.jpg）
@@ -70,6 +71,7 @@ TankEntity (基类)
 ### 游戏状态机
 
 Game 对象管理以下状态：
+
 - `menu` - 主菜单
 - `playing` - 游戏进行中
 - `levelComplete` - 关卡完成
@@ -79,6 +81,7 @@ Game 对象管理以下状态：
 ### 关键系统
 
 **AudioSys（音频系统）**
+
 - 使用 Web Audio API 合成所有音效
 - 武器音效：`forWeapon(weaponType)` 根据武器类型播放对应音效
 - 事件音效：`hitMetal()`, `hitExplosion()`, `pickup()`, `tankDeath()`, `bossRoar()`, `victory()`
@@ -86,6 +89,7 @@ Game 对象管理以下状态：
 - 延迟初始化：首次用户手势时调用 `boot()`
 
 **VoiceSys（语音系统）**
+
 - 使用 Web Speech API 实现角色配音
 - 角色配置：narrator（旁白）, hero（英雄）, princess（公主）, villain（反派）, boss（Boss）
 - 公主语音特殊处理：优先选择女性声音（通过名称关键词匹配）
@@ -94,6 +98,7 @@ Game 对象管理以下状态：
 - `speaking` 标志用于 DialogueSys 的波形动画
 
 **DialogueSys（对话系统）**
+
 - 用户控制，不自动推进（与早期版本不同）
 - `update(dt)` 是空操作，只有 `advance()` 或 `stop()` 能推进对话
 - Space 键或点击画布推进对话
@@ -102,6 +107,7 @@ Game 对象管理以下状态：
 - 说话者名称在 TTS 激活时显示 ♪ 后缀
 
 **STORY_DATA 结构**
+
 - 5 个条目（索引 0-4），对应 5 个关卡
 - 每个条目包含：`opening`（开场）, `bossIntro`（Boss 登场）, `bossDefeated`（Boss 战败）
 - 剧情：罗兰王子从 5 个 Boss 手中营救艾拉拉公主
@@ -114,11 +120,13 @@ Game 对象管理以下状态：
 音频和剧情系统通过 monkey-patching 集成到现有代码中（第 2398-2497 行的 IIFE）：
 
 **重要规则**：
+
 - Patches 必须在 `_origDraw`/`_origUpdate` 包装器之前运行
 - 包装器会捕获已打补丁的版本
 - 补丁顺序很重要
 
 **补丁位置**：
+
 - `Player.prototype._fire` → 调用 `AudioSys.forWeapon(weaponType)`
 - `Player.prototype._fireLaser` → 激光音效节流（220ms 冷却，`this._lsCD`）
 - `TankEntity.prototype.takeDmg` → `AudioSys.hitMetal()`（每个实体 140ms 冷却）
@@ -134,6 +142,7 @@ Game 对象管理以下状态：
 ### 剧情触发标志
 
 `Game._sf` 对象跟踪每关的剧情状态：
+
 ```javascript
 {
   openingDone: false,      // 开场对话已播放
@@ -147,6 +156,7 @@ Game 对象管理以下状态：
 ### 武器系统
 
 6 种武器类型，每种有不同的伤害、射速、子弹速度和特殊效果：
+
 - **pistol** - 基础武器
 - **shotgun** - 散弹，一次发射多颗子弹
 - **machinegun** - 高射速
@@ -157,6 +167,7 @@ Game 对象管理以下状态：
 ### Boss 行为模式
 
 每个 Boss 有独特的 AI 模式（在 `Boss.prototype.update` 中）：
+
 - **boss1** (Steel Sergeant) - 基础追击
 - **boss2** (Desert Viper) - 快速机动
 - **boss3** (Frost Commander) - 重型坦克

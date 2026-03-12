@@ -117,7 +117,7 @@ Game (主循环)
 enum GameState {
 	MENU = 'menu',
 	PLAYING = 'playing',
-	DIALOGUE = 'dialogue',      // 新增：对话中（暂停游戏）
+	DIALOGUE = 'dialogue', // 新增：对话中（暂停游戏）
 	LEVEL_COMPLETE = 'levelComplete',
 	GAME_OVER = 'gameOver',
 	PAUSE = 'pause'
@@ -167,11 +167,13 @@ enum GameState {
 ### 生命周期管理
 
 **动能子弹：**
+
 - 生命周期：10 秒后自动消失
 - 反弹限制：最多反弹 5 次后消失
 - 地图限制：超过 200 颗时强制清理最早的子弹
 
 **激光束：**
+
 - 不受生命周期限制
 - 持续时间由武器配置决定
 - 不计入地图子弹数量限制
@@ -180,18 +182,18 @@ enum GameState {
 
 ### 10 个关卡配置
 
-| 关卡 | 主题 | 环境特色 | Boss 名称 | 难度 |
-|------|------|----------|-----------|------|
-| 1 | 森林（Forest） | 绿色植被 | Steel Sergeant | ★☆☆☆☆ |
-| 2 | 沙漠（Desert） | 黄色沙丘 | Desert Viper | ★★☆☆☆ |
-| 3 | 雪地（Snow） | 白色冰雪 | Frost Commander | ★★☆☆☆ |
-| 4 | 城市（City） | 灰色建筑 | Urban Tyrant | ★★★☆☆ |
-| 5 | 基地（Base） | 军事基地 | General Vex | ★★★☆☆ |
-| 6 | 火山（Volcano） | 熔岩地形 | Inferno Warlord | ★★★☆☆ |
-| 7 | 海洋（Ocean） | 水下基地 | Tidal Destroyer | ★★★★☆ |
-| 8 | 太空（Space） | 失重效果 | Cosmic Tyrant | ★★★★☆ |
-| 9 | 丛林（Jungle） | 密集植被 | Jungle Predator | ★★★★★ |
-| 10 | 废墟（Ruins） | 末日废土 | Supreme Overlord | ★★★★★ |
+| 关卡 | 主题            | 环境特色 | Boss 名称        | 难度  |
+| ---- | --------------- | -------- | ---------------- | ----- |
+| 1    | 森林（Forest）  | 绿色植被 | Steel Sergeant   | ★☆☆☆☆ |
+| 2    | 沙漠（Desert）  | 黄色沙丘 | Desert Viper     | ★★☆☆☆ |
+| 3    | 雪地（Snow）    | 白色冰雪 | Frost Commander  | ★★☆☆☆ |
+| 4    | 城市（City）    | 灰色建筑 | Urban Tyrant     | ★★★☆☆ |
+| 5    | 基地（Base）    | 军事基地 | General Vex      | ★★★☆☆ |
+| 6    | 火山（Volcano） | 熔岩地形 | Inferno Warlord  | ★★★☆☆ |
+| 7    | 海洋（Ocean）   | 水下基地 | Tidal Destroyer  | ★★★★☆ |
+| 8    | 太空（Space）   | 失重效果 | Cosmic Tyrant    | ★★★★☆ |
+| 9    | 丛林（Jungle）  | 密集植被 | Jungle Predator  | ★★★★★ |
+| 10   | 废墟（Ruins）   | 末日废土 | Supreme Overlord | ★★★★★ |
 
 ### 地图连通性验证
 
@@ -205,18 +207,21 @@ enum GameState {
 ### 三幕剧结构
 
 **第一幕（关卡 1-3）：觉醒**
+
 - 主角：罗兰中尉（Lieutenant Roland）
 - 任务：调查神秘信号
 - 发现：艾拉拉公主被绑架
 - Boss：Steel Sergeant, Desert Viper, Frost Commander
 
 **第二幕（关卡 4-6）：追击**
+
 - 深入敌后
 - 揭露阴谋：General Vex 企图控制世界
 - 新盟友：反抗军领袖 Zara
 - Boss：Urban Tyrant, Inferno Warlord, Tidal Destroyer
 
 **第三幕（关卡 7-10）：决战**
+
 - 太空要塞突袭
 - 丛林基地渗透
 - 最终决战：废墟中的终极对决
@@ -225,16 +230,17 @@ enum GameState {
 
 ### 角色声音配置
 
-| 角色 | 名称 | Pitch | Rate | 音色特征 |
-|------|------|-------|------|----------|
-| narrator | 旁白 | 0.92 | 0.78 | 中性声音 |
-| roland | 罗兰中尉 | 1.14 | 1.04 | 低沉男声 |
-| elara | 艾拉拉公主 | 1.72 | 1.06 | 柔和女声 |
-| vex | General Vex | 0.36 | 0.68 | 反派声音（极低沉）|
-| zara | Zara | 1.45 | 0.95 | 坚定女声 |
-| boss | Boss | 0.40 | 0.82 | 攻击性声音 |
+| 角色     | 名称        | Pitch | Rate | 音色特征           |
+| -------- | ----------- | ----- | ---- | ------------------ |
+| narrator | 旁白        | 0.92  | 0.78 | 中性声音           |
+| roland   | 罗兰中尉    | 1.14  | 1.04 | 低沉男声           |
+| elara    | 艾拉拉公主  | 1.72  | 1.06 | 柔和女声           |
+| vex      | General Vex | 0.36  | 0.68 | 反派声音（极低沉） |
+| zara     | Zara        | 1.45  | 0.95 | 坚定女声           |
+| boss     | Boss        | 0.40  | 0.82 | 攻击性声音         |
 
 **语音选择策略：**
+
 - 公主优先选择女性声音（通过名称关键词匹配）
 - 反派使用极低 pitch 增强威胁感
 - 每个角色有独特的 pitch/rate 组合，确保辨识度
@@ -244,18 +250,21 @@ enum GameState {
 ### 现代化风格（参考 Diep.io / Tanki Online）
 
 **主菜单：**
+
 - 大标题动画效果
 - 渐变背景（深色主题）
 - 发光按钮（hover 效果）
 - 关卡选择界面（卡片式布局）
 
 **游戏内 HUD：**
+
 - 左上角：生命值条（红色渐变）
 - 右上角：当前武器图标 + 弹药
 - 底部中央：道具栏（最多 3 个激活道具）
 - 小地图（右下角）
 
 **对话框：**
+
 - 半透明黑色背景
 - 角色头像（左侧圆形）
 - 打字机效果文字
@@ -266,13 +275,13 @@ enum GameState {
 
 ### 背景图片（2K 分辨率）
 
-| 文件名 | 主题 | 分辨率 | 来源建议 |
-|--------|------|--------|----------|
-| bg06-volcano.jpg | 火山熔岩 | 2560×1440 | Unsplash: volcano lava |
-| bg07-ocean.jpg | 水下基地 | 2560×1440 | Unsplash: underwater ocean |
-| bg08-space.jpg | 太空站 | 2560×1440 | Unsplash: space station |
-| bg09-jungle.jpg | 密集丛林 | 2560×1440 | Unsplash: dense jungle |
-| bg10-ruins.jpg | 末日废墟 | 2560×1440 | Unsplash: apocalypse ruins |
+| 文件名           | 主题     | 分辨率    | 来源建议                   |
+| ---------------- | -------- | --------- | -------------------------- |
+| bg06-volcano.jpg | 火山熔岩 | 2560×1440 | Unsplash: volcano lava     |
+| bg07-ocean.jpg   | 水下基地 | 2560×1440 | Unsplash: underwater ocean |
+| bg08-space.jpg   | 太空站   | 2560×1440 | Unsplash: space station    |
+| bg09-jungle.jpg  | 密集丛林 | 2560×1440 | Unsplash: dense jungle     |
+| bg10-ruins.jpg   | 末日废墟 | 2560×1440 | Unsplash: apocalypse ruins |
 
 ## 错误处理策略
 
