@@ -27,7 +27,8 @@
       "Bash(head -395 \"D:/llm/mygame/tank-battle/src/ui/Menu.ts\" > \"D:/llm/mygame/tank-battle/src/ui/Menu.ts.tmp\" && mv \"D:/llm/mygame/tank-battle/src/ui/Menu.ts.tmp\" \"D:/llm/mygame/tank-battle/src/ui/Menu.ts\")",
       "Bash(head -394 \"D:/llm/mygame/tank-battle/src/ui/Menu.ts\" > \"D:/llm/mygame/tank-battle/src/ui/Menu.ts.tmp\" && mv \"D:/llm/mygame/tank-battle/src/ui/Menu.ts.tmp\" \"D:/llm/mygame/tank-battle/src/ui/Menu.ts\")",
       "Bash(cd \"D:\\\\llm\\\\mygame\\\\tank-battle\" && sed -n '390,$p' src/ui/Menu.ts)",
-      "Bash(echo \"}\" >> \"D:/llm/mygame/tank-battle/src/ui/Menu.ts\")"
+      "Bash(echo \"}\" >> \"D:/llm/mygame/tank-battle/src/ui/Menu.ts\")",
+      "Bash(wc -l \"D:/llm/mygame/tank-battle/src/ui/\"*.ts)"
     ]
   }
 }

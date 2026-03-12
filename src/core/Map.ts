@@ -31,6 +31,20 @@ export class GameMap {
 	}
 
 	/**
+	 * 获取地图宽度
+	 */
+	getWidth(): number {
+		return this.width;
+	}
+
+	/**
+	 * 获取地图高度
+	 */
+	getHeight(): number {
+		return this.height;
+	}
+
+	/**
 	 * 解析地图字符串
 	 */
 	private parseMap(mapString: string): void {
@@ -205,13 +219,5 @@ export class GameMap {
 				);
 			}
 		}
-	}
-
-	getWidth(): number {
-		return this.width * TILE_SIZE;
-	}
-
-	getHeight(): number {
-		return this.height * TILE_SIZE;
 	}
 }
