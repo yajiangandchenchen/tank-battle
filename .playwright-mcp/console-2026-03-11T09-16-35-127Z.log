@@ -1,0 +1,51 @@
+[    5004ms] [ERROR] Access to fetch at 'https://elb.the-ozone-project.com/openrtb2/auction' from origin 'https://diep.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ https://diep.io/:0
+[    5005ms] [ERROR] Failed to load resource: net::ERR_FAILED @ https://elb.the-ozone-project.com/openrtb2/auction:0
+[    6139ms] [ERROR] Access to fetch at 'https://hbopenbid.pubmatic.com/translator?source=prebid-client&gzip=1' from origin 'https://diep.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ https://diep.io/:0
+[    6139ms] [ERROR] Failed to load resource: net::ERR_FAILED @ https://hbopenbid.pubmatic.com/translator?source=prebid-client&gzip=1:0
+[    8419ms] [WARNING] The resource https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/cmg/1 was preloaded using link preload but not used within a few seconds from the window's load event. Please make sure it has an appropriate `as` value and it is preloaded intentionally. @ https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/f/ov2/av0/rch/n0c9b/0x4AAAAAAAxQZWZW4E7IeaAK/auto/fbE/new/normal?lang=auto:0
+[    9106ms] [ERROR] %c%d font-size:0;color:transparent NaN @ https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/f/ov2/av0/rch/n0c9b/0x4AAAAAAAxQZWZW4E7IeaAK/auto/fbE/new/normal?lang=auto:0
+[    9106ms] [ERROR] %c%d font-size:0;color:transparent NaN @ https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/f/ov2/av0/rch/n0c9b/0x4AAAAAAAxQZWZW4E7IeaAK/auto/fbE/new/normal?lang=auto:0
+[    9109ms] [WARNING] %c%d font-size:0;color:transparent NaN @ https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/f/ov2/av0/rch/n0c9b/0x4AAAAAAAxQZWZW4E7IeaAK/auto/fbE/new/normal?lang=auto:0
+[    9109ms] [WARNING] %c%d font-size:0;color:transparent NaN @ https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/f/ov2/av0/rch/n0c9b/0x4AAAAAAAxQZWZW4E7IeaAK/auto/fbE/new/normal?lang=auto:0
+[    9549ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/pat/9da97626daefc67f/1773220600817/c4d991722c9d5d645839c70bcfbd9e2307301f93fe3632ca8a41b022f49239b5/_3tC7EXKia609Jh:0
+[    9740ms] [ERROR]  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback. @ https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/g/turnstile/f/ov2/av0/rch/n0c9b/0x4AAAAAAAxQZWZW4E7IeaAK/auto/fbE/new/normal?lang=auto:0
+[   16820ms] [ERROR] Failed to load resource: the server responded with a status of 424 (Failed Dependency) @ https://t.adx.opera.com/pub/sync?pubid=pub10101531197440&gdpr=1&gdpr_consent=:0
+[   20114ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://ups.analytics.yahoo.com/ups/58917/cms?uid=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339&gpp=&gpp_sid=&us_privacy=&gdpr=0&gdpr_consent=:0
+[   20114ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://ups.analytics.yahoo.com/ups/58917/cms?uid=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339&gpp=&gpp_sid=&us_privacy=&gdpr=0&gdpr_consent=:0
+[   20132ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://ups.analytics.yahoo.com/ups/58292/sync?_origin=1&uid=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339&redir=true&gdpr=0&gdpr_consent=&us_privacy=&gpp=&gpp_sid=:0
+[   20114ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://ups.analytics.yahoo.com/ups/58917/cms?uid=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339&gpp=&gpp_sid=&us_privacy=&gdpr=0&gdpr_consent=:0
+[   20132ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://ups.analytics.yahoo.com/ups/58292/sync?_origin=1&uid=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339&redir=true&gdpr=0&gdpr_consent=&us_privacy=&gpp=&gpp_sid=:0
+[   20326ms] [ERROR] Failed to load resource: the server responded with a status of 403 () @ https://ups.analytics.yahoo.com/ups/58917/cms?uid=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339&gpp=&gpp_sid=&us_privacy=&gdpr=0&gdpr_consent=:0
+[   22611ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://hb-vntsm-com.global.ssl.fastly.net/v4/srv/g.txt:0
+[   22612ms] Uncaught (in promise) TypeError: Failed to fetch
+    at <anonymous> (https://api.adinplay.com/libs/aiptag/pub/DIE/diep.io/tag.min.js:0:233344)
+    at <anonymous> (https://api.adinplay.com/libs/aiptag/pub/DIE/diep.io/tag.min.js:0:240087)
+    at <anonymous> (https://api.adinplay.com/libs/aiptag/pub/DIE/diep.io/tag.min.js:0:240091)
+[   22881ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://hb-vntsm-com.global.ssl.fastly.net/v4/srv/g.txt:0
+[   22883ms] Uncaught (in promise) TypeError: Failed to fetch
+    at g (https://api.adinplay.com/v4/live/aip/ad-manager.js:1:718822)
+    at Gu (https://api.adinplay.com/v4/live/aip/ad-manager.js:1:129215)
+    at <anonymous> (https://api.adinplay.com/v4/live/aip/ad-manager.js:1:136721)
+[   23023ms] [ERROR] Failed to load resource: the server responded with a status of 429 () @ https://www.temu.com/api/adx/cm/pixel-pubmatic?id=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339&gdpr=0&gdpr_consent=&us_privacy=:0
+[   23023ms] [ERROR] Failed to load resource: the server responded with a status of 429 () @ https://www.temu.com/api/adx/cm/pixel-pubmatic?id=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339&gdpr=0&gdpr_consent=&us_privacy=:0
+[   23037ms] [ERROR] Failed to load resource: the server responded with a status of 429 () @ https://www.temu.com/api/adx/cm/pixel-opera?adx_uid=c740105cef937541&gdpr=0&gdpr_consent=&us_privacy=&redir=https%3A%2F%2Ft.oa.opera.com%2Fsync%3Fvendor%3D60369%26pubid%3Dpub8730968190912%26gdpr%3D0%26consent%3D%26us_privacy%3D%26custom_data%3D:0
+[   24943ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://c.amazon-adsystem.com/aax2/apstag.js:0
+[   24945ms] undefined
+[   27497ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://fundingchoicesmessages.google.com/i/421469808?ers=3:0
+[   28576ms] [WARNING] [GPT] Using deprecated googletag.encryptedSignalProviders. Please use googletag.secureSignalProviders instead.
+https://goo.gle/gpt-message#155 @ https://securepubads.g.doubleclick.net/pagead/managed/js/gpt/m202603050101/pubads_impl.js:18
+[   29427ms] [WARNING] [GPT] Using deprecated googletag.encryptedSignalProviders. Please use googletag.secureSignalProviders instead.
+https://goo.gle/gpt-message#155 @ https://securepubads.g.doubleclick.net/pagead/managed/js/gpt/m202603050101/pubads_impl.js:18
+[   33784ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://edge.venatusmedia.com/placementscape?u=e881348d-77d4-4b0c-a219-b17df305d67d&c=1:0
+[   36893ms] [ERROR] Access to fetch at 'https://elb.the-ozone-project.com/openrtb2/auction' from origin 'https://diep.io' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ https://diep.io/:0
+[   36894ms] [ERROR] Failed to load resource: net::ERR_FAILED @ https://elb.the-ozone-project.com/openrtb2/auction:0
+[   37121ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://rtb.mfadsrvr.com/sync?ssp=onetag&ssp_user_id=wKQ46zo3TM2fCupZd0tKYnH1ls94e6D7SjV-B3Ow_LI&gdpr=1&gdpr_consent=:0
+[   37308ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://s.amazon-adsystem.com/ecm3?ex=onetag.com&id=wKQ46zo3TM2fCupZd0tKYnH1ls94e6D7SjV-B3Ow_LI:0
+[   37572ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://s.amazon-adsystem.com/dcm?pid=50cd21b7-d8d7-4615-9fb9-a2be831f8488&id=:0
+[   38166ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://x.bidswitch.net/sync?ssp=onetag&gdpr=1&gdpr_consent=&user_id=wKQ46zo3TM2fCupZd0tKYnH1ls94e6D7SjV-B3Ow_LI:0
+[   38759ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://s.amazon-adsystem.com/ecm3?id=MMLTRPCL-I-GG79&ex=d-rubiconproject.com&status=ok:0
+[   38836ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://aax-eu.amazon-adsystem.com/s/dcm?pid=a38a8ddf-19a7-4ab8-ba05-0a61de92a7e5&id=:0
+[   38851ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://id.rlcdn.com/709414.gif:0
+[   40955ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://idsync.rlcdn.com/420486.gif?partner_uid=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339:0
+[   41360ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://pixel.tapad.com/idsync/ex/receive?partner_id=3355&partner_device_id=MMLTRPCL-I-GG79:0
+[   41624ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_TIMED_OUT @ https://pixel.tapad.com/idsync/ex/receive?partner_id=3371&partner_device_id=220D5E4D-1ADD-4915-BF2C-2F9FC06DA339:0

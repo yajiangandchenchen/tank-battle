@@ -1,0 +1,2542 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>坦克大战 · Tank Battle</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+background: radial-gradient(ellipse at center, #0d1520 0%, #050a10 100%);
+display: flex; justify-content: center; align-items: center;
+min-height: 100vh; overflow: hidden; user-select: none;
+font-family: 'Courier New', Courier, monospace;
+}
+#canvas {
+display: block; cursor: crosshair;
+box-shadow: 0 0 0 2px #1a2a1a, 0 0 40px rgba(60,180,60,0.2), 0 0 80px rgba(30,90,30,0.1);
+}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<script>
+'use strict';
+// ═══════════════════════════════════════════════════════════
+// CANVAS & SCALE
+// ═══════════════════════════════════════════════════════════
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const CW = 1200, CH = 720;
+const uiScale = Math.min(window.innerWidth / CW, window.innerHeight / CH);
+canvas.width = CW; canvas.height = CH;
+canvas.style.width = (CW * uiScale) + 'px';
+canvas.style.height = (CH * uiScale) + 'px';
+// ── 背景图片 ──
+const BG_IMGS=[];
+(()=>{ for(let i=1;i<=6;i++){const img=new Image();img.src=`img/bg${i}.jpg`;BG_IMGS.push(img);} })();
+function drawBgImage(img){
+if(!img||!img.complete||!img.naturalWidth) return;
+const s=Math.max(CW/img.naturalWidth,CH/img.naturalHeight);
+ctx.drawImage(img,(CW-img.naturalWidth*s)/2,(CH-img.naturalHeight*s)/2,img.naturalWidth*s,img.naturalHeight*s);
+}
+// ═══════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════
+const TILE = 48;
+const PI2 = Math.PI * 2;
+const T = 0, W = 1, B = 2; // tile: floor, wall, brick
+// ═══════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════
+const rnd   = (a,b) => a + Math.random()*(b-a);
+const rndI  = (a,b) => a + Math.floor(Math.random()*(b-a+1));
+const clamp = (v,lo,hi) => Math.max(lo,Math.min(hi,v));
+const lerp  = (a,b,t) => a+(b-a)*t;
+const dist  = (a,b) => Math.hypot(b.x-a.x, b.y-a.y);
+const ang   = (a,b) => Math.atan2(b.y-a.y, b.x-a.x);
+const lerpA = (a,b,t) => { let d=b-a; while(d>Math.PI)d-=PI2; while(d<-Math.PI)d+=PI2; return a+d*t; };
+// Canvas shortcuts
+function rRect(x,y,w,h,r=4) {
+ctx.beginPath();
+ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+ctx.arcTo(x+w,y+h,x,y+h,r);
+ctx.arcTo(x,y+h,x,y,r);
+ctx.arcTo(x,y,x+w,y,r);
+ctx.arcTo(x,y,x+w,y,r);
+ctx.closePath();
+}
+function glowC(x,y,r,color) {
+const g=ctx.createRadialGradient(x,y,0,x,y,r);
+g.addColorStop(0,color); g.addColorStop(1,'rgba(0,0,0,0)');
+ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r,0,PI2); ctx.fill();
+}
+function txtC(text,x,y,sz,color,outline='#000',align='center') {
+ctx.font=`bold ${sz}px Courier New`;
+ctx.textAlign=align; ctx.textBaseline='middle';
+ctx.lineWidth=Math.max(2,sz/8); ctx.strokeStyle=outline;
+ctx.strokeText(text,x,y); ctx.fillStyle=color; ctx.fillText(text,x,y);
+}
+function drawBtn(label,cx,cy,w,h,bg,border,textCol){
+const x=cx-w/2, y=cy-h/2;
+ctx.save();
+ctx.shadowColor=border; ctx.shadowBlur=18;
+ctx.fillStyle=bg; ctx.strokeStyle=border; ctx.lineWidth=3;
+ctx.beginPath(); ctx.roundRect(x,y,w,h,14); ctx.fill(); ctx.stroke();
+ctx.restore();
+txtC(label,cx,cy,26,textCol,'#000');
+return {x,y,w,h};
+}
+// ═══════════════════════════════════════════════════════════
+// INPUT
+// ═══════════════════════════════════════════════════════════
+const Input = {
+keys:{}, mx:CW/2, my:CH/2, mdown:false,
+init() {
+document.addEventListener('keydown', e => { this.keys[e.key.toLowerCase()]=true; if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault(); });
+document.addEventListener('keyup',   e => { this.keys[e.key.toLowerCase()]=false; });
+canvas.addEventListener('mousemove', e => {
+const r=canvas.getBoundingClientRect();
+this.mx=(e.clientX-r.left)/uiScale; this.my=(e.clientY-r.top)/uiScale;
+});
+canvas.addEventListener('mousedown', ()=>this.mdown=true);
+canvas.addEventListener('mouseup',   ()=>this.mdown=false);
+canvas.addEventListener('click', e=>{
+if(!document.fullscreenElement) document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen().catch(()=>{});
+if(Game.state!=='playing'){
+const r=canvas.getBoundingClientRect();
+Game.handleClick((e.clientX-r.left)/uiScale,(e.clientY-r.top)/uiScale);
+}
+});
+},
+worldMouse() { return { x: this.mx+Camera.x, y: this.my+Camera.y }; }
+};
+// ═══════════════════════════════════════════════════════════
+// CAMERA
+// ═══════════════════════════════════════════════════════════
+const Camera = {
+x:0, y:0, tx:0, ty:0, shk:0, skx:0, sky:0,
+follow(e, mapW, mapH) {
+this.tx = clamp(e.x-CW/2, 0, Math.max(0,mapW-CW));
+this.ty = clamp(e.y-CH/2, 0, Math.max(0,mapH-CH));
+this.x  = lerp(this.x, this.tx, 0.12);
+this.y  = lerp(this.y, this.ty, 0.12);
+},
+shake(amount) { this.shk=Math.max(this.shk,amount); },
+update() {
+if(this.shk>0.4){ this.skx=rnd(-this.shk,this.shk); this.sky=rnd(-this.shk,this.shk); this.shk*=0.82; }
+else { this.skx=this.sky=this.shk=0; }
+},
+apply()   { ctx.save(); ctx.translate(-this.x+this.skx,-this.y+this.sky); },
+restore() { ctx.restore(); }
+};
+// ═══════════════════════════════════════════════════════════
+// PARTICLES
+// ═══════════════════════════════════════════════════════════
+const particles = [];
+class Particle {
+constructor(x,y,vx,vy,color,life,size,grav=0) {
+Object.assign(this,{x,y,vx,vy,color,life,maxLife:life,size,grav});
+}
+update(dt) {
+this.x+=this.vx*dt; this.y+=this.vy*dt;
+this.vy+=this.grav*dt;
+const friction=Math.pow(0.94,dt/16.67);
+this.vx*=friction; this.vy*=friction;
+this.life-=dt;
+}
+draw() {
+const a=Math.max(0,this.life/this.maxLife);
+ctx.save(); ctx.globalAlpha=a;
+ctx.fillStyle=this.color; ctx.shadowColor=this.color; ctx.shadowBlur=this.size;
+ctx.beginPath(); ctx.arc(this.x,this.y,Math.max(0.1,this.size*a),0,PI2); ctx.fill();
+ctx.restore();
+}
+get dead(){ return this.life<=0; }
+}
+function spawnExplosion(x,y,scale=1,colors=['#ff8800','#ff4400','#ffcc00','#ffffff']) {
+Camera.shake(scale*5);
+const n=Math.floor(scale*18);
+for(let i=0;i<n;i++){
+const s=rnd(0.04,0.28)*scale, a=rnd(0,PI2);
+particles.push(new Particle(x+rnd(-4,4),y+rnd(-4,4),Math.cos(a)*s,Math.sin(a)*s,
+colors[rndI(0,colors.length-1)], rnd(300,800)*scale, rnd(2,7)*scale, 0.00008));
+}
+for(let i=0;i<Math.floor(n/2);i++){
+const s=rnd(0.02,0.1)*scale, a=rnd(0,PI2);
+particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s-0.06,
+`rgba(${rndI(80,140)},${rndI(80,140)},${rndI(80,140)},0.9)`, rnd(500,1400)*scale, rnd(4,14)*scale, -0.00003));
+}
+}
+function spawnMuzzle(x,y,angle,sz=4) {
+for(let i=0;i<6;i++){
+const a=angle+rnd(-0.25,0.25), s=rnd(0.08,0.22);
+particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,'#fff8aa',rnd(80,200),sz*rnd(0.3,0.8)));
+}
+}
+// ═══════════════════════════════════════════════════════════
+// WEAPON DEFINITIONS
+// ═══════════════════════════════════════════════════════════
+const WEAPONS = {
+pistol:     { name:'手枪',   fireRate:700,  mag:6,   reload:2200, spd:0.45, dmg:25, cnt:1, spread:0,    sz:3.5, col:'#ffee22', glow:'#ffaa00', trail:10, expl:false, isLaser:false, kbk:2   },
+shotgun:    { name:'霰弹枪', fireRate:1100, mag:4,   reload:2800, spd:0.5,  dmg:18, cnt:7, spread:0.32, sz:2.5, col:'#ff8822', glow:'#ff5500', trail:5,  expl:false, isLaser:false, kbk:0.8 },
+machinegun: { name:'机枪',   fireRate:90,   mag:45,  reload:3000, spd:0.65, dmg:10, cnt:1, spread:0.06, sz:2.5, col:'#ffdd00', glow:'#ffaa00', trail:12, expl:false, isLaser:false, kbk:0.5 },
+cannon:     { name:'大炮',   fireRate:2000, mag:3,   reload:4200, spd:0.32, dmg:90, cnt:1, spread:0,    sz:9,   col:'#ff3300', glow:'#ff6600', trail:6,  expl:true,  isLaser:false, kbk:6, explR:88, explDmg:55 },
+laser:      { name:'激光炮', fireRate:0,    mag:999, reload:0,    spd:0,    dmg:4,  cnt:1, spread:0,    sz:3,   col:'#ff00ff', glow:'#cc00ff', trail:0,  expl:false, isLaser:true,  kbk:0 },
+minigun:    { name:'迷你枪', fireRate:58,   mag:90,  reload:5000, spd:0.75, dmg:8,  cnt:1, spread:0.08, sz:2,   col:'#ff0044', glow:'#ff0066', trail:14, expl:false, isLaser:false, kbk:0.4 },
+};
+// ═══════════════════════════════════════════════════════════
+// MAP PARSER
+// ═══════════════════════════════════════════════════════════
+function createMap(str) {
+const lines = str.trim().split('\n').map(l=>l.replace(/\r/g,''));
+const maxLen = Math.max(...lines.map(l=>l.length));
+return lines.map(line => {
+const padded = line.padEnd(maxLen,'#');
+return [...padded].map(ch => ch==='#'?W : ch==='B'?B : T);
+});
+}
+const DIR4=[[1,0],[-1,0],[0,1],[0,-1]];
+function _cloneTiles(tiles){ return tiles.map(r=>r.slice()); }
+function _tileSolid(tiles,tx,ty){
+  if(ty<0||tx<0||ty>=tiles.length||tx>=tiles[0].length) return true;
+  const t=tiles[ty][tx];
+  return t===W||t===B;
+}
+function _findNearestFloorTile(tiles,sx,sy){
+  const h=tiles.length,w=tiles[0].length;
+  sx=clamp(sx,1,w-2); sy=clamp(sy,1,h-2);
+  const vis=Array.from({length:h},()=>Array(w).fill(false));
+  const q=[[sx,sy]]; vis[sy][sx]=true;
+  while(q.length){
+    const [tx,ty]=q.shift();
+    if(tiles[ty][tx]===T) return {tx,ty};
+    for(const [dx,dy] of DIR4){
+      const nx=tx+dx,ny=ty+dy;
+      if(nx<1||ny<1||nx>=w-1||ny>=h-1||vis[ny][nx]) continue;
+      vis[ny][nx]=true; q.push([nx,ny]);
+    }
+  }
+  return null;
+}
+function _floodFloor(tiles,sx,sy){
+  const h=tiles.length,w=tiles[0].length;
+  const vis=Array.from({length:h},()=>Array(w).fill(false));
+  if(sx<0||sy<0||sx>=w||sy>=h||tiles[sy][sx]!==T) return vis;
+  const q=[[sx,sy]]; vis[sy][sx]=true;
+  while(q.length){
+    const [tx,ty]=q.shift();
+    for(const [dx,dy] of DIR4){
+      const nx=tx+dx,ny=ty+dy;
+      if(nx<1||ny<1||nx>=w-1||ny>=h-1||vis[ny][nx]) continue;
+      if(tiles[ny][nx]!==T) continue;
+      vis[ny][nx]=true; q.push([nx,ny]);
+    }
+  }
+  return vis;
+}
+function _connectAllFloor(tiles,sx,sy){
+  const h=tiles.length,w=tiles[0].length;
+  const st=_findNearestFloorTile(tiles,sx,sy);
+  if(!st) return tiles;
+  const carve=(tx,ty)=>{
+    if(tx<1||ty<1||tx>=w-1||ty>=h-1) return;
+    tiles[ty][tx]=T;
+  };
+  let vis=_floodFloor(tiles,st.tx,st.ty);
+  while(true){
+    const reach=[], miss=[];
+    for(let ty=1;ty<h-1;ty++){
+      for(let tx=1;tx<w-1;tx++){
+        if(tiles[ty][tx]!==T) continue;
+        (vis[ty][tx]?reach:miss).push({tx,ty});
+      }
+    }
+    if(miss.length===0||reach.length===0) break;
+    let bestA=null,bestB=null,bestD=1e9;
+    for(const a of miss){
+      for(const b of reach){
+        const d=Math.abs(a.tx-b.tx)+Math.abs(a.ty-b.ty);
+        if(d<bestD){bestD=d;bestA=a;bestB=b;}
+      }
+    }
+    if(!bestA||!bestB) break;
+    let x=bestA.tx,y=bestA.ty;
+    carve(x,y);
+    while(x!==bestB.tx){ x+=Math.sign(bestB.tx-x); carve(x,y); }
+    while(y!==bestB.ty){ y+=Math.sign(bestB.ty-y); carve(x,y); }
+    vis=_floodFloor(tiles,st.tx,st.ty);
+  }
+  return tiles;
+}
+function prepareLevelMap(level){
+  const tiles=_cloneTiles(level.map);
+  return _connectAllFloor(tiles,level.pStart.tx,level.pStart.ty);
+}
+// ═══════════════════════════════════════════════════════════
+// LEVEL DATA  (5 关)
+// ═══════════════════════════════════════════════════════════
+const LEVELS = [
+// ─── 第一关：森林前哨 ────────────────────────────────────────
+{
+name:'第一关 · 森林前哨', sub:'Forest Outpost', theme:'forest',
+map: createMap(`
+#########################
+#.......#.....#.........#
+#.BB....#.....#.BB......#
+#.......#...............#
+#.BB.....#####.......BB.#
+#.............#.........#
+#.............#.........#
+#.......####............#
+#....BBB.......B........#
+#...............##......#
+#...........##..##......#
+#.......#####...........#
+#.......#...#...........#
+#...........#...........#
+#########################`),
+pStart:{tx:1,ty:1},
+enemies:[{tx:10,ty:1,t:'basic'},{tx:21,ty:2,t:'basic'},{tx:7,ty:6,t:'basic'},{tx:19,ty:8,t:'fast'},{tx:14,ty:11,t:'basic'}],
+boss:{tx:22,ty:13,t:'boss1'},
+pups:[{tx:14,ty:8,t:'shotgun'},{tx:4,ty:12,t:'health'},{tx:20,ty:12,t:'health'}],
+},
+// ─── 第二关：沙漠峡谷 ────────────────────────────────────────
+{
+name:'第二关 · 沙漠峡谷', sub:'Desert Canyon', theme:'desert',
+map: createMap(`
+###########################
+#.........#.......#.......#
+#.BB..BB..#.......#.BB....#
+#.........#.......#.......#
+#.........###.#####.......#
+#.........#...#...........#
+#.BB...BB.#...#...BB...BB.#
+#.........#...#...........#
+#.........#.......#.......#
+#####.#####.......#########
+#.................#.......#
+#.BB.............BB.......#
+#.................#.......#
+#.........####............#
+#.........#..#............#
+#.BB......#..#......BB....#
+###########################`),
+pStart:{tx:1,ty:1},
+enemies:[{tx:13,ty:1,t:'basic'},{tx:23,ty:2,t:'fast'},{tx:5,ty:5,t:'basic'},{tx:20,ty:6,t:'fast'},{tx:13,ty:10,t:'basic'},{tx:4,ty:13,t:'fast'},{tx:22,ty:12,t:'basic'}],
+boss:{tx:13,ty:15,t:'boss2'},
+pups:[{tx:8,ty:9,t:'machinegun'},{tx:22,ty:9,t:'health'},{tx:13,ty:5,t:'shotgun'},{tx:20,ty:15,t:'health'}],
+},
+// ─── 第三关：冰封基地 ────────────────────────────────────────
+{
+name:'第三关 · 冰封基地', sub:'Frozen Tundra', theme:'snow',
+map: createMap(`
+##############################
+#....#.........#....#........#
+#.BB.#.B.....B.#.BB.#.BB....#
+#....#.........#....#.......#
+#....#######.###....#########
+#....#.....#.#......#.......#
+#...........##......#.BB....#
+#...........#.......#.......#
+#.....BBB...######.##.......#
+#.........#.................#
+#.........#.B..........B....#
+#.....#####.##...###########
+#.....#........#.#..........#
+#.BB..#.B......#.#.BB.B.....#
+#.....#........#.#..........#
+#.....#########.#...........#
+#.....#.................BB..#
+#.....#.........B...........#
+##############################`),
+pStart:{tx:1,ty:1},
+enemies:[{tx:14,ty:1,t:'basic'},{tx:26,ty:2,t:'fast'},{tx:4,ty:5,t:'heavy'},{tx:14,ty:6,t:'basic'},{tx:22,ty:8,t:'fast'},{tx:7,ty:12,t:'basic'},{tx:21,ty:13,t:'heavy'},{tx:14,ty:17,t:'fast'},{tx:26,ty:16,t:'basic'}],
+boss:{tx:24,ty:17,t:'boss3'},
+pups:[{tx:8,ty:8,t:'cannon'},{tx:22,ty:4,t:'machinegun'},{tx:14,ty:14,t:'health'},{tx:5,ty:17,t:'health'},{tx:18,ty:10,t:'minigun'}],
+},
+// ─── 第四关：城市废墟 ────────────────────────────────────────
+{
+name:'第四关 · 城市废墟', sub:'Urban Ruins', theme:'city',
+map: createMap(`
+#################################
+#..........#.....#......#.......#
+#.BB..B....#.....#..BB..#.BB...#
+#..........#.....#......#.......#
+#..........#######......##......#
+######..............................#
+#.....#####.....#####.....#######
+#.....#...#.B.B.#...#.....#......#
+#.BB..#...#.....#...#.BB..#.BB..#
+#.....#...#.....#...#.....#......#
+#.....#...#######...#.....######.#
+#.....###...........###...#......#
+#.........#.......#.......#.BB..#
+#.....B...#.......#...B...#......#
+#.........#########.......#......#
+###.......#.......#.......######.#
+#.......B.#.......#.......#......#
+#.........#.......#.......#.BB..#
+#.........#########.......#......#
+#.....#####.....#####.....###...#
+#.....#...................#......#
+#.BB..#...................#.BB..#
+#.....#####################.....#
+#################################`),
+pStart:{tx:1,ty:1},
+enemies:[{tx:13,ty:1,t:'basic'},{tx:26,ty:1,t:'fast'},{tx:4,ty:6,t:'heavy'},{tx:20,ty:7,t:'basic'},{tx:29,ty:6,t:'fast'},{tx:7,ty:12,t:'elite'},{tx:22,ty:12,t:'elite'},{tx:13,ty:16,t:'heavy'},{tx:26,ty:17,t:'basic'},{tx:4,ty:21,t:'fast'},{tx:16,ty:21,t:'elite'}],
+boss:{tx:30,ty:22,t:'boss4'},
+pups:[{tx:16,ty:4,t:'laser'},{tx:6,ty:12,t:'cannon'},{tx:26,ty:12,t:'machinegun'},{tx:13,ty:19,t:'health'},{tx:24,ty:19,t:'minigun'},{tx:9,ty:19,t:'health'}],
+},
+// ─── 第五关：敌军指挥部 ──────────────────────────────────────
+{
+name:'第五关 · 敌军指挥部', sub:'Enemy Command', theme:'base',
+map: createMap(`
+####################################
+#.........#.......#..........#....#
+#.BB..BB..#.B...B.#.BB..BB...#.BB.#
+#.........#.......#..........#....#
+#.........#########..........######
+####...............................####
+#.....#######.......#######...#####
+#.....#.....#.B...B.#.....#...#...#
+#.BB..#.....#.......#.....#BB.#BB.#
+#.....#.....#.......#.....#...#...#
+#.....#######.......#######...####
+#.......................................#
+#...#######...........#######...#.#
+#...#.....#.....B.....#.....#...#.#
+#BB.#.....#...........#.....#BB.#.#
+#...#.....#.....B.....#.....#...#.#
+#...#######...........#######...####
+###.......................................####
+#.....#########.....#########.....##
+#.BB..#.......#.....#.......#.BB..#
+#.....#.......#######.......#.....#
+#.....#.......#.....#.......#.....#
+#.....#########.....#########.....#
+####################################`),
+pStart:{tx:1,ty:1},
+enemies:[{tx:17,ty:1,t:'elite'},{tx:31,ty:2,t:'fast'},{tx:5,ty:6,t:'heavy'},{tx:17,ty:7,t:'elite'},{tx:30,ty:7,t:'heavy'},{tx:8,ty:13,t:'elite'},{tx:17,ty:14,t:'basic'},{tx:26,ty:13,t:'elite'},{tx:4,ty:19,t:'heavy'},{tx:17,ty:20,t:'fast'},{tx:30,ty:19,t:'heavy'},{tx:10,ty:22,t:'elite'},{tx:24,ty:22,t:'elite'},{tx:17,ty:22,t:'elite'}],
+boss:{tx:17,ty:22,t:'boss5'},
+pups:[{tx:8,ty:1,t:'minigun'},{tx:26,ty:1,t:'laser'},{tx:17,ty:5,t:'health'},{tx:5,ty:12,t:'cannon'},{tx:29,ty:12,t:'cannon'},{tx:17,ty:17,t:'health'},{tx:10,ty:20,t:'machinegun'},{tx:24,ty:20,t:'minigun'},{tx:3,ty:22,t:'health'},{tx:31,ty:22,t:'health'}],
+},
+];
+// ═══════════════════════════════════════════════════════════
+// STORY DATA  ·  one entry per level  (0-indexed)
+// ═══════════════════════════════════════════════════════════
+const STORY_DATA = [
+  // ── Level 0 : Forest Outpost ────────────────────────────
+  { opening:[
+      {role:'narrator', speaker:'NARRATOR',             text:"The Iron Tyrant, General Vex, has abducted Princess Elara and retreated deep into the kingdom's ancient forests. Prince Roland, sole survivor of the Royal Tank Corps, charges in alone."},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Elara... I'm coming. No army, no fortress, no tyrant will stand between us."},
+      {role:'villain',  speaker:'GENERAL VEX  [Radio]', text:"Try all you like, little prince. My Steel Sergeant will reduce your tank to scrap. Ha ha ha!"},
+    ],
+    bossIntro:[
+      {role:'boss',     speaker:'STEEL SERGEANT',       text:"So the little prince comes to play soldier? This forest is my killing ground — and yours!"},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Where is Princess Elara? Tell me now, or face the consequences."},
+      {role:'boss',     speaker:'STEEL SERGEANT',       text:"Your princess cries for you every night — quite touching. MEN, FIRE AT WILL!"},
+    ],
+    bossDefeated:[
+      {role:'boss',     speaker:'STEEL SERGEANT',       text:"Un-believable... I yield... She was taken east... Desert Canyon base..."},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Thank you, Sergeant. Rest now. I'll find her."},
+    ],
+  },
+  // ── Level 1 : Desert Canyon ─────────────────────────────
+  { opening:[
+      {role:'villain',  speaker:'GENERAL VEX  [Radio]', text:"You surprise me, Roland. My Sergeant was undefeated for seven years. Yet here you stand."},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Release Elara, Vex. This ends now."},
+      {role:'villain',  speaker:'GENERAL VEX  [Radio]', text:"The Princess is most... entertaining company. My Desert Viper awaits you. Enjoy the heat, Prince!"},
+    ],
+    bossIntro:[
+      {role:'boss',     speaker:'DESERT VIPER',         text:"I am the Desert Viper! My strike is faster than the eye can follow. Prepare to be buried in sand!"},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"I've crossed mountains for her. A desert is nothing."},
+    ],
+    bossDefeated:[
+      {role:'boss',     speaker:'DESERT VIPER',         text:"My venom... wasted... She was moved north... Frozen Tundra stronghold..."},
+      {role:'narrator', speaker:'NARRATOR',             text:"Roland finds a torn note in Elara's handwriting: 'Roland — Frozen Tundra. Vex's main base. It's a trap — but I found a weakness. I love you. Hurry.'"},
+    ],
+  },
+  // ── Level 2 : Frozen Tundra ─────────────────────────────
+  { opening:[
+      {role:'narrator', speaker:'NARRATOR',             text:"A coded transmission cuts through the blizzard — Princess Elara's voice, distorted but unmistakable."},
+      {role:'princess', speaker:'PRINCESS ELARA',       text:"Roland... if you receive this... I'm in the Frozen Tundra stronghold. Vex has three rings of defense, but I found a crack in them. Stay strong. I love you."},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Elara! I hear you. I will come through every wall and every cannon. Wait for me — I am almost there."},
+    ],
+    bossIntro:[
+      {role:'boss',     speaker:'FROST COMMANDER',      text:"The Frost Commander bows to no one! This tundra has swallowed whole armies. You are just one more frozen corpse!"},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"I've crossed deserts and forests for the woman I love. A frozen wasteland is nothing."},
+      {role:'boss',     speaker:'FROST COMMANDER',      text:"Foolish romantic fool! Then freeze with honour!"},
+    ],
+    bossDefeated:[
+      {role:'boss',     speaker:'FROST COMMANDER',      text:"You fight with the fury of a man in love... remarkable... The Princess speaks of you constantly..."},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Is she safe?! WHERE IS SHE?"},
+      {role:'boss',     speaker:'FROST COMMANDER',      text:"Urban Ruins district... Vex's mobile command tower... hurry, Prince, before he moves her again..."},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Urban Ruins. Elara — I'm on my way."},
+    ],
+  },
+  // ── Level 3 : Urban Ruins ───────────────────────────────
+  { opening:[
+      {role:'villain',  speaker:'GENERAL VEX',          text:"You've come so far, little prince. Too far. The Urban Ruins are my personal killing ground."},
+      {role:'villain',  speaker:'GENERAL VEX',          text:"Elara grows tired of waiting. Tired of hoping. A hero who takes THIS long... is not much of a hero at all."},
+      {role:'princess', speaker:'PRINCESS ELARA',       text:"Roland! I can hear you on the radio — I'm in the command tower! Don't believe him — I have NOT given up!"},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Elara! I'm here — in the city! I'm coming to you! Hold on just a little longer!"},
+    ],
+    bossIntro:[
+      {role:'boss',     speaker:'URBAN TYRANT',         text:"I am Vex's iron right hand — the Urban Tyrant! You go no further, Prince!"},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Every man standing between me and Elara falls today. You're just one more."},
+      {role:'boss',     speaker:'URBAN TYRANT',         text:"Such passion! Almost admirable. ALMOST! All units — ATTACK! Crush him to dust!"},
+    ],
+    bossDefeated:[
+      {role:'boss',     speaker:'URBAN TYRANT',         text:"The Princess... central command spire... Vex is there himself... forgive me, Roland..."},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Vex himself. Good. This ends tonight."},
+      {role:'narrator', speaker:'NARRATOR',             text:"Roland's radio crackles with a live signal. Princess Elara, bruised but defiant: 'People of the kingdom — I have NOT surrendered. Roland is coming. Vex's reign ends TODAY.'"},
+    ],
+  },
+  // ── Level 4 : Enemy Command ─────────────────────────────
+  { opening:[
+      {role:'villain',  speaker:'GENERAL VEX',          text:"Extraordinary. You've destroyed four of my finest commanders. I confess, Roland — I truly underestimated you."},
+      {role:'villain',  speaker:'GENERAL VEX',          text:"But this ends NOW. The Enemy Command is my fortress, my throne. You will die here, and Elara will watch every moment of it."},
+      {role:'princess', speaker:'PRINCESS ELARA',       text:"Roland — DON'T! The whole base is rigged to explode if you reach the—"},
+      {role:'villain',  speaker:'GENERAL VEX',          text:"SILENCE, girl! ...Come then, Prince. Come and meet your destiny."},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"I'm not here for your throne, Vex. I'm here for Elara. And I'm taking her home — today."},
+    ],
+    bossIntro:[
+      {role:'villain',  speaker:'GENERAL VEX',          text:"FACE ME, Roland! I, General Vex — the Iron Tyrant — will crush you with my own hands! Behold the FINAL SOVEREIGN — my ultimate war machine!"},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"It's over, Vex. Release Elara. Last chance."},
+      {role:'villain',  speaker:'GENERAL VEX',          text:"NEVER! This kingdom is MINE! Open fire! FIRE EVERYTHING! DESTROY HIM NOW!"},
+    ],
+    bossDefeated:[
+      {role:'villain',  speaker:'GENERAL VEX',          text:"How... HOW IS THIS POSSIBLE?! I am the Iron Tyrant... I cannot be... I cannot be beaten..."},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"It's over, Vex. Call off your forces. Stand down. NOW."},
+      {role:'villain',  speaker:'GENERAL VEX',          text:"I... yield... The base is yours, Roland... You have earned it..."},
+      {role:'narrator', speaker:'NARRATOR',             text:"The command tower doors burst open. Princess Elara races across the ruins, tears streaming down her face."},
+      {role:'princess', speaker:'PRINCESS ELARA',       text:"ROLAND! Oh Roland — you came! You actually came! I knew it — I KNEW you would never give up!"},
+      {role:'hero',     speaker:'PRINCE ROLAND',        text:"Always, Elara. I will always come for you. Are you hurt?"},
+      {role:'princess', speaker:'PRINCESS ELARA',       text:"I'm fine. I'm perfect. You're here. That is all that matters."},
+      {role:'narrator', speaker:'NARRATOR',             text:"As the Iron Tyrant's fortress crumbles around them, Prince Roland holds Princess Elara close amid the ruins — and for the first time in months, she is safe. The kingdom is free. Their story... just beginning."},
+    ],
+  },
+];
+
+// Spoken-only Chinese translation map for story lines.
+// UI still renders the original English `text`.
+const STORY_TTS_ZH = {
+  "The Iron Tyrant, General Vex, has abducted Princess Elara and retreated deep into the kingdom's ancient forests. Prince Roland, sole survivor of the Royal Tank Corps, charges in alone.":"铁血暴君维克斯将军绑架了艾拉拉公主，并退入王国古老森林深处。皇家坦克军团唯一幸存者罗兰王子独自突进。",
+  "Elara... I'm coming. No army, no fortress, no tyrant will stand between us.":"艾拉拉……我来了。没有军队、没有堡垒、没有暴君能阻挡我们。",
+  "Try all you like, little prince. My Steel Sergeant will reduce your tank to scrap. Ha ha ha!":"尽管试吧，小王子。我的钢铁中士会把你的坦克打成废铁。哈哈哈！",
+  "So the little prince comes to play soldier? This forest is my killing ground — and yours!":"小王子也来当兵了？这片森林是我的猎场——也会是你的坟场！",
+  "Where is Princess Elara? Tell me now, or face the consequences.":"艾拉拉公主在哪？立刻告诉我，否则后果自负。",
+  "Your princess cries for you every night — quite touching. MEN, FIRE AT WILL!":"你的公主每晚都在为你哭泣——真感人。全体听令，自由开火！",
+  "Un-believable... I yield... She was taken east... Desert Canyon base...":"难以置信……我投降……她被带去东边了……沙漠峡谷基地……",
+  "Thank you, Sergeant. Rest now. I'll find her.":"谢谢你，中士。安心休息吧。我会找到她。",
+  "You surprise me, Roland. My Sergeant was undefeated for seven years. Yet here you stand.":"罗兰，你让我很意外。我的中士七年未尝一败，而你居然还能站着。",
+  "Release Elara, Vex. This ends now.":"放了艾拉拉，维克斯。现在就结束这一切。",
+  "The Princess is most... entertaining company. My Desert Viper awaits you. Enjoy the heat, Prince!":"公主可是……很有趣的陪伴。我的沙漠蝰蛇正等着你。好好享受高温吧，王子！",
+  "I am the Desert Viper! My strike is faster than the eye can follow. Prepare to be buried in sand!":"我是沙漠蝰蛇！我的攻击快到肉眼难追。准备被黄沙掩埋吧！",
+  "I've crossed mountains for her. A desert is nothing.":"为了她我翻越群山。区区沙漠不算什么。",
+  "My venom... wasted... She was moved north... Frozen Tundra stronghold...":"我的毒牙……白费了……她被转移到北方……冰封苔原要塞……",
+  "Roland finds a torn note in Elara's handwriting: 'Roland — Frozen Tundra. Vex's main base. It's a trap — but I found a weakness. I love you. Hurry.'":"罗兰找到一张艾拉拉亲笔写的残破纸条：‘罗兰——冰封苔原。维克斯主基地。这是陷阱——但我找到了弱点。我爱你。快来。’",
+  "A coded transmission cuts through the blizzard — Princess Elara's voice, distorted but unmistakable.":"一段加密通讯穿透暴风雪——那是艾拉拉公主的声音，虽然失真却清晰可辨。",
+  "Roland... if you receive this... I'm in the Frozen Tundra stronghold. Vex has three rings of defense, but I found a crack in them. Stay strong. I love you.":"罗兰……如果你收到这段讯息……我在冰封苔原要塞。维克斯有三重防线，但我找到了一道破绽。一定要坚持。我爱你。",
+  "Elara! I hear you. I will come through every wall and every cannon. Wait for me — I am almost there.":"艾拉拉！我听到了。我会穿过每一道高墙、每一门炮火。等我——我快到了。",
+  "The Frost Commander bows to no one! This tundra has swallowed whole armies. You are just one more frozen corpse!":"寒霜指挥官绝不向任何人低头！这片苔原吞没过整支军队。你只会再添一具冻尸！",
+  "I've crossed deserts and forests for the woman I love. A frozen wasteland is nothing.":"为了我爱的女人，我穿过沙漠与森林。冰冷荒原也不值一提。",
+  "Foolish romantic fool! Then freeze with honour!":"愚蠢的痴情人！那就带着可笑的荣誉冻死吧！",
+  "You fight with the fury of a man in love... remarkable... The Princess speaks of you constantly...":"你战斗时像一个陷入爱情的狂人……令人惊叹……公主一直在提起你……",
+  "Is she safe?! WHERE IS SHE?":"她安全吗？！她在哪？！",
+  "Urban Ruins district... Vex's mobile command tower... hurry, Prince, before he moves her again...":"都市废墟区域……维克斯的移动指挥塔……快点，王子，趁他还没再次转移她……",
+  "Urban Ruins. Elara — I'm on my way.":"都市废墟。艾拉拉——我马上到。",
+  "You've come so far, little prince. Too far. The Urban Ruins are my personal killing ground.":"你已经走得很远了，小王子。太远了。都市废墟是我私人的猎杀场。",
+  "Elara grows tired of waiting. Tired of hoping. A hero who takes THIS long... is not much of a hero at all.":"艾拉拉已经等累了，也盼累了。一个要花这么久才到的英雄……根本算不上英雄。",
+  "Roland! I can hear you on the radio — I'm in the command tower! Don't believe him — I have NOT given up!":"罗兰！我在无线电里听到你了——我在指挥塔里！别信他——我绝没有放弃！",
+  "Elara! I'm here — in the city! I'm coming to you! Hold on just a little longer!":"艾拉拉！我到了——就在城里！我正赶去你那里！再坚持一下！",
+  "I am Vex's iron right hand — the Urban Tyrant! You go no further, Prince!":"我是维克斯的钢铁右手——都市暴君！王子，你到此为止！",
+  "Every man standing between me and Elara falls today. You're just one more.":"今天，凡是挡在我和艾拉拉之间的人都会倒下。你也一样。",
+  "Such passion! Almost admirable. ALMOST! All units — ATTACK! Crush him to dust!":"多么炽烈的执念！几乎值得敬佩。只是几乎！全体部队——进攻！把他碾成尘埃！",
+  "The Princess... central command spire... Vex is there himself... forgive me, Roland...":"公主……在中央指挥尖塔……维克斯本人就在那……原谅我，罗兰……",
+  "Vex himself. Good. This ends tonight.":"维克斯本人？很好。今晚就做个了断。",
+  "Roland's radio crackles with a live signal. Princess Elara, bruised but defiant: 'People of the kingdom — I have NOT surrendered. Roland is coming. Vex's reign ends TODAY.'":"罗兰的无线电里传来实时信号。伤痕累累却不屈的艾拉拉公主说道：‘王国的人民们——我没有投降。罗兰正在赶来。维克斯的统治今天终结。’",
+  "Extraordinary. You've destroyed four of my finest commanders. I confess, Roland — I truly underestimated you.":"真是非凡。你击败了我四名最强指挥官。我承认，罗兰——我确实低估你了。",
+  "But this ends NOW. The Enemy Command is my fortress, my throne. You will die here, and Elara will watch every moment of it.":"但这一切现在就要结束。敌军总指挥部是我的堡垒、我的王座。你会死在这里，而艾拉拉会看着这一切。",
+  "Roland — DON'T! The whole base is rigged to explode if you reach the—":"罗兰——别过来！如果你接近那里，整个基地都会被引爆——",
+  "SILENCE, girl! ...Come then, Prince. Come and meet your destiny.":"闭嘴，丫头！……来吧，王子。来迎接你的命运。",
+  "I'm not here for your throne, Vex. I'm here for Elara. And I'm taking her home — today.":"我不是为你的王座而来，维克斯。我是为艾拉拉而来。今天我就要带她回家。",
+  "FACE ME, Roland! I, General Vex — the Iron Tyrant — will crush you with my own hands! Behold the FINAL SOVEREIGN — my ultimate war machine!":"面对我吧，罗兰！我，维克斯将军——铁血暴君——会亲手碾碎你！看吧，终焉主宰——我的终极战争机器！",
+  "It's over, Vex. Release Elara. Last chance.":"结束了，维克斯。放了艾拉拉。这是最后机会。",
+  "NEVER! This kingdom is MINE! Open fire! FIRE EVERYTHING! DESTROY HIM NOW!":"休想！这个王国是我的！开火！火力全开！立刻毁掉他！",
+  "How... HOW IS THIS POSSIBLE?! I am the Iron Tyrant... I cannot be... I cannot be beaten...":"怎么会……这怎么可能？！我是铁血暴君……我不可能……我不可能被打败……",
+  "It's over, Vex. Call off your forces. Stand down. NOW.":"结束了，维克斯。让你的部队停手。全部解除战斗。立刻。",
+  "I... yield... The base is yours, Roland... You have earned it...":"我……认输……基地归你了，罗兰……这是你应得的……",
+  "The command tower doors burst open. Princess Elara races across the ruins, tears streaming down her face.":"指挥塔大门轰然开启。艾拉拉公主冲过废墟，泪水从脸颊滑落。",
+  "ROLAND! Oh Roland — you came! You actually came! I knew it — I KNEW you would never give up!":"罗兰！哦罗兰——你来了！你真的来了！我就知道——我一直知道你绝不会放弃！",
+  "Always, Elara. I will always come for you. Are you hurt?":"永远如此，艾拉拉。我永远都会为你而来。你受伤了吗？",
+  "I'm fine. I'm perfect. You're here. That is all that matters.":"我很好。我现在好极了。你在这里。这样就够了。",
+  "As the Iron Tyrant's fortress crumbles around them, Prince Roland holds Princess Elara close amid the ruins — and for the first time in months, she is safe. The kingdom is free. Their story... just beginning.":"铁血暴君的要塞在他们身边崩塌，罗兰王子在废墟中紧紧抱住艾拉拉公主——数月以来，她第一次真正安全。王国重获自由。而他们的故事……才刚刚开始。"
+};
+// ═══════════════════════════════════════════════════════════
+// MAP CLASS
+// ═══════════════════════════════════════════════════════════
+class GameMap {
+constructor(tiles, theme) {
+this.tiles=tiles; this.theme=theme;
+this.h=tiles.length; this.w=tiles[0]?tiles[0].length:0;
+this.pixW=this.w*TILE; this.pixH=this.h*TILE;
+this.brickHp={};
+for(let ty=0;ty<this.h;ty++)
+for(let tx=0;tx<this.w;tx++)
+if(tiles[ty][tx]===B) this.brickHp[`${tx},${ty}`]=2;
+this._buildCanvas();
+}
+_buildCanvas() {
+// Pre-render static layer to offscreen canvas for performance
+this._oc = document.createElement('canvas');
+this._oc.width = this.pixW; this._oc.height = this.pixH;
+const oc = this._oc.getContext('2d');
+this._drawToCtx(oc, true);
+}
+get(tx,ty) {
+if(tx<0||ty<0||tx>=this.w||ty>=this.h) return W;
+return this.tiles[ty][tx];
+}
+solid(tx,ty) { const t=this.get(tx,ty); return t===W||t===B; }
+solidAt(x,y,hw,hh) {
+const x0=Math.floor((x-hw)/TILE), y0=Math.floor((y-hh)/TILE);
+const x1=Math.floor((x+hw)/TILE), y1=Math.floor((y+hh)/TILE);
+for(let ty=y0;ty<=y1;ty++) for(let tx=x0;tx<=x1;tx++) if(this.solid(tx,ty)) return true;
+return false;
+}
+hitBrick(tx,ty) {
+if(this.get(tx,ty)!==B) return false;
+const k=`${tx},${ty}`;
+this.brickHp[k]=(this.brickHp[k]||2)-1;
+if(this.brickHp[k]<=0){
+this.tiles[ty][tx]=T; delete this.brickHp[k];
+spawnExplosion(tx*TILE+TILE/2,ty*TILE+TILE/2,0.7,['#884422','#aa6633','#cc8844','#553311']);
+this._buildCanvas(); // rebuild cache
+} else { this._buildCanvas(); }
+return true;
+}
+hasLOS(x1,y1,x2,y2) {
+const dx=x2-x1,dy=y2-y1;
+const steps=Math.ceil(Math.hypot(dx,dy)/(TILE/2));
+if(steps===0) return true;
+for(let i=1;i<steps;i++){
+const t=i/steps;
+const px=x1+dx*t,py=y1+dy*t;
+if(this.solid(Math.floor(px/TILE),Math.floor(py/TILE))) return false;
+}
+return true;
+}
+draw() {
+// Draw cached offscreen canvas
+ctx.drawImage(this._oc, 0, 0);
+// Then re-draw bricks that may have changed (on top)
+// (already rebuilt in hitBrick, so the offscreen canvas is always current)
+}
+_drawToCtx(c, skipBricks=false) {
+const th = THEMES[this.theme]||THEMES.forest;
+// Floor
+for(let ty=0;ty<this.h;ty++) {
+for(let tx=0;tx<this.w;tx++) {
+const tile=this.tiles[ty][tx];
+const px=tx*TILE,py=ty*TILE;
+if(tile===T||tile===B) {
+// Checkerboard floor
+c.fillStyle=(tx+ty)%2===0?th.f1:th.f2;
+c.fillRect(px,py,TILE,TILE);
+// Floor detail dots
+if((tx*3+ty*7)%11===0) {
+c.fillStyle='rgba(0,0,0,0.08)';
+c.beginPath(); c.arc(px+TILE/2,py+TILE/2,3,0,PI2); c.fill();
+}
+}
+if(tile===W) {
+// Drop shadow
+c.fillStyle='rgba(0,0,0,0.45)';
+c.fillRect(px+3,py+TILE-2,TILE+1,5);
+c.fillRect(px+TILE-2,py+3,5,TILE+1);
+// Wall body gradient
+const wg=c.createLinearGradient(px,py,px+TILE,py+TILE);
+wg.addColorStop(0,th.wt); wg.addColorStop(0.5,th.w2); wg.addColorStop(1,th.w1);
+c.fillStyle=wg; c.fillRect(px,py,TILE,TILE);
+// Panel lines
+c.strokeStyle='rgba(0,0,0,0.2)'; c.lineWidth=1;
+c.strokeRect(px+1,py+1,TILE-2,TILE-2);
+c.strokeRect(px+5,py+5,TILE-10,TILE-10);
+// Highlight bevel
+c.fillStyle='rgba(255,255,255,0.12)';
+c.fillRect(px,py,TILE,3); c.fillRect(px,py,3,TILE);
+// "Crack" detail
+const seed=(tx*7+ty*13)%6;
+c.strokeStyle='rgba(0,0,0,0.22)'; c.lineWidth=1;
+c.beginPath();
+if(seed===0){c.moveTo(px+8,py+6);c.lineTo(px+18,py+26);c.lineTo(px+12,py+42);}
+if(seed===1){c.moveTo(px+30,py+8);c.lineTo(px+22,py+30);}
+if(seed===2){c.moveTo(px+5,py+20);c.lineTo(px+25,py+38);}
+if(seed===3){c.moveTo(px+35,py+15);c.lineTo(px+28,py+40);}
+if(seed===4){c.moveTo(px+10,py+10);c.lineTo(px+38,py+22);}
+c.stroke();
+}
+if(tile===B) {
+// Mortar background
+c.fillStyle=th.bm; c.fillRect(px,py,TILE,TILE);
+// Brick rows
+const brickH=12;
+for(let row=0;row<Math.ceil(TILE/brickH);row++){
+const off=row%2===0?0:12;
+for(let col=-1;col<3;col++){
+const bx=px+col*24+off, by2=py+row*brickH;
+const cbx=Math.max(px,bx+1), cbw=Math.min(px+TILE-1,bx+23)-cbx;
+if(cbw>0){
+const bg=c.createLinearGradient(cbx,by2,cbx,by2+brickH-1);
+bg.addColorStop(0,th.b2); bg.addColorStop(1,th.b1);
+c.fillStyle=bg; c.fillRect(cbx,by2+1,cbw,brickH-2);
+}
+}
+}
+// Check hp damage
+const k=`${tx},${ty}`;
+if(this.brickHp[k]===1){
+c.fillStyle='rgba(0,0,0,0.38)'; c.fillRect(px,py,TILE,TILE);
+c.strokeStyle='rgba(255,80,0,0.5)'; c.lineWidth=1.5;
+c.beginPath();
+c.moveTo(px+5,py+5);c.lineTo(px+TILE-5,py+TILE-5);
+c.moveTo(px+TILE-5,py+5);c.lineTo(px+5,py+TILE-5); c.stroke();
+}
+// Shadow
+c.fillStyle='rgba(0,0,0,0.4)';
+c.fillRect(px+2,py+TILE-2,TILE+1,4); c.fillRect(px+TILE-2,py+2,4,TILE+1);
+// Highlight
+c.fillStyle='rgba(255,255,255,0.1)';
+c.fillRect(px,py,TILE,2); c.fillRect(px,py,2,TILE);
+}
+}
+}
+}
+}
+const THEMES = {
+  forest:{ f1:'#3d6b3a',f2:'#4a7a44', w1:'#5a4a32',w2:'#7a6245',wt:'#9a8060', b1:'#8a3030',b2:'#aa4444',bm:'#553322' },
+  desert:{ f1:'#b8924a',f2:'#c8a250', w1:'#7a5a28',w2:'#9a7a38',wt:'#bfa060', b1:'#9a6a30',b2:'#ba8a40',bm:'#6a4a20' },
+  snow:  { f1:'#c8dce8',f2:'#d8eaf5', w1:'#687888',w2:'#8898a8',wt:'#aabcc8', b1:'#8898b0',b2:'#a0b0c0',bm:'#607080' },
+  city:  { f1:'#484848',f2:'#535353', w1:'#252525',w2:'#353535',wt:'#505050', b1:'#5a3030',b2:'#6a4040',bm:'#3a2020' },
+  base:  { f1:'#1e2e1e',f2:'#243024', w1:'#0e1a0e',w2:'#1a2a1a',wt:'#2a3e2a', b1:'#3a4a2a',b2:'#4a5a38',bm:'#2a3a1a' },
+};
+
+// ═══════════════════════════════════════════════════════════
+// POWER-UP
+// ═══════════════════════════════════════════════════════════
+class PowerUp {
+  constructor(x,y,type) {
+    this.x=x; this.y=y; this.type=type; this.r=20; this.collected=false; this.t=0;
+    const I={pistol:'🔫',shotgun:'💥',machinegun:'⚡',cannon:'💣',laser:'🔆',minigun:'🔴',health:'❤️',shield:'🛡️',resize:'❓'};
+    const C={pistol:'#ffee00',shotgun:'#ff8800',machinegun:'#ffcc00',cannon:'#ff4400',laser:'#ff00ff',minigun:'#ff0044',health:'#22ff44',shield:'#4488ff',resize:'#00ffee'};
+    this.icon=I[type]||'?'; this.color=C[type]||'#fff';
+  }
+update(dt){ this.t+=dt*0.003; if(this.collectCooldown>0) this.collectCooldown-=dt; }
+draw(){
+if(this.collected) return;
+const bob=Math.sin(this.t)*6;
+// 放大缩小：0.7~1.3，幅度明显
+const pulse=1.0+Math.sin(this.t*2.2)*0.3;
+const r=this.r*pulse;
+const py=this.y+bob;
+// 外圈扩散光环
+const outerR=r*1.8+Math.sin(this.t*1.5)*6;
+glowC(this.x,py,outerR,this.color+'66');
+ctx.save();
+// 实心背景圆（深色底+彩色半透明叠加，颜色鲜艳）
+ctx.beginPath(); ctx.arc(this.x,py,r,0,PI2);
+ctx.fillStyle='rgba(10,10,20,0.82)'; ctx.fill();
+ctx.beginPath(); ctx.arc(this.x,py,r,0,PI2);
+ctx.fillStyle=this.color+'55'; ctx.fill();
+// 彩色描边
+ctx.strokeStyle=this.color; ctx.lineWidth=3; ctx.globalAlpha=1;
+ctx.beginPath(); ctx.arc(this.x,py,r,0,PI2); ctx.stroke();
+// 图标
+ctx.font=`${Math.round(18*pulse)}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+ctx.fillStyle='#fff'; ctx.fillText(this.icon,this.x,py);
+ctx.restore();
+}
+}
+// ═══════════════════════════════════════════════════════════
+// BULLET
+// ═══════════════════════════════════════════════════════════
+class Bullet {
+constructor(x,y,angle,wdef,ownerId,isPlayer){
+this.x=x; this.y=y; this.angle=angle;
+this.vx=Math.cos(angle)*wdef.spd; this.vy=Math.sin(angle)*wdef.spd;
+this.dmg=wdef.dmg; this.sz=wdef.sz; this.col=wdef.col; this.glow=wdef.glow;
+this.trail=[]; this.trailMax=wdef.trail||8;
+this.expl=wdef.expl||false; this.explR=wdef.explR||0; this.explDmg=wdef.explDmg||0;
+this.kbk=wdef.kbk||1;
+this.ownerId=ownerId; this.isPlayer=isPlayer; this.dead=false;
+}
+update(dt,map){
+this.trail.push({x:this.x,y:this.y});
+if(this.trail.length>this.trailMax) this.trail.shift();
+const steps=Math.ceil(Math.max(Math.abs(this.vx*dt),Math.abs(this.vy*dt))/(TILE/2))+1;
+const sdt=dt/steps;
+for(let i=0;i<steps;i++){
+this.x+=this.vx*sdt; this.y+=this.vy*sdt;
+const tx=Math.floor(this.x/TILE), ty=Math.floor(this.y/TILE);
+const tile=map.get(tx,ty);
+if(tile===W){ this.die(false,map,tx,ty); return; }
+if(tile===B){ map.hitBrick(tx,ty); this.die(false,map,tx,ty); return; }
+}
+if(this.x<0||this.y<0||this.x>map.pixW||this.y>map.pixH) this.dead=true;
+}
+die(hitEntity,map,tx,ty){
+this.dead=true;
+if(this.expl){
+spawnExplosion(this.x,this.y,2.8,['#ff6600','#ff3300','#ffcc00','#ff9900','#fff']);
+Camera.shake(14);
+// Splash damage handled by Game
+this._splashed=true;
+} else {
+spawnExplosion(this.x,this.y,0.45,[this.col,'#fff',this.glow]);
+}
+}
+draw(){
+for(let i=0;i<this.trail.length;i++){
+const t=i/this.trail.length;
+ctx.save(); ctx.globalAlpha=t*0.45;
+ctx.fillStyle=this.col;
+ctx.beginPath(); ctx.arc(this.trail[i].x,this.trail[i].y,this.sz*t*0.7,0,PI2); ctx.fill();
+ctx.restore();
+}
+glowC(this.x,this.y,this.sz*3.5,this.glow+'44');
+ctx.save();
+ctx.shadowColor=this.glow; ctx.shadowBlur=this.sz*2;
+ctx.fillStyle=this.col; ctx.beginPath(); ctx.arc(this.x,this.y,this.sz,0,PI2); ctx.fill();
+ctx.fillStyle='rgba(255,255,255,0.65)';
+ctx.beginPath(); ctx.arc(this.x-this.sz*0.28,this.y-this.sz*0.28,this.sz*0.32,0,PI2); ctx.fill();
+ctx.restore();
+}
+}
+// ═══════════════════════════════════════════════════════════
+// LASER BEAM
+// ═══════════════════════════════════════════════════════════
+class LaserBeam {
+constructor(x,y,angle,dmg){ this.x=x;this.y=y;this.angle=angle;this.dmg=dmg;this.ex=x;this.ey=y;this.t=0; }
+cast(map,targets){
+const dx=Math.cos(this.angle),dy=Math.sin(this.angle);
+const step=5,maxD=1400;
+this.hitTarget=null;
+let cx=this.x,cy=this.y;
+for(let d=step;d<maxD;d+=step){
+cx=this.x+dx*d; cy=this.y+dy*d;
+const tx=Math.floor(cx/TILE),ty=Math.floor(cy/TILE);
+const tile=map.get(tx,ty);
+if(tile===W||tile===B||tile===3){ if(tile===B&&d>step)map.hitBrick(tx,ty); this.ex=cx;this.ey=cy;return; }
+for(const t of targets){
+if(!t||t.dead) continue;
+if(Math.hypot(cx-t.x,cy-t.y)<t.hw+2){ this.ex=cx;this.ey=cy;this.hitTarget=t;return; }
+}
+}
+this.ex=cx; this.ey=cy;
+}
+draw(){
+this.t+=0.12;
+const flicker=0.85+Math.sin(this.t*7)*0.15;
+ctx.save();
+// Outer glow
+ctx.strokeStyle=`rgba(255,0,255,${0.12*flicker})`; ctx.lineWidth=22; ctx.lineCap='round';
+ctx.beginPath(); ctx.moveTo(this.x,this.y); ctx.lineTo(this.ex,this.ey); ctx.stroke();
+// Mid glow
+ctx.strokeStyle=`rgba(200,0,255,${0.28*flicker})`; ctx.lineWidth=10;
+ctx.beginPath(); ctx.moveTo(this.x,this.y); ctx.lineTo(this.ex,this.ey); ctx.stroke();
+// Core
+ctx.strokeStyle='#ffffff'; ctx.lineWidth=2.5;
+ctx.shadowColor='#ff00ff'; ctx.shadowBlur=18;
+ctx.beginPath(); ctx.moveTo(this.x,this.y); ctx.lineTo(this.ex,this.ey); ctx.stroke();
+// Hit spark
+if(Math.hypot(this.ex-this.x,this.ey-this.y)>20){
+glowC(this.ex,this.ey,22,`rgba(255,0,255,${0.5*flicker})`);
+ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(this.ex,this.ey,4,0,PI2); ctx.fill();
+}
+ctx.restore();
+}
+}
+// ═══════════════════════════════════════════════════════════
+// TANK COLORS
+// ═══════════════════════════════════════════════════════════
+const TC = {
+player:{ h:'#4a8a3a',hl:'#6aaa54',hd:'#2a5a1a', tr:'#1a1a1a',trl:'#2a2a2a', tu:'#3a7a2a',tul:'#52a03c' },
+basic: { h:'#8b3a3a',hl:'#aa4a4a',hd:'#5a1a1a', tr:'#1a1a1a',trl:'#2a2a2a', tu:'#7a2222',tul:'#9a3232' },
+fast:  { h:'#8a6a1a',hl:'#aaa224',hd:'#5a4000', tr:'#0a0a0a',trl:'#1a1a1a', tu:'#7a5a10',tul:'#9a7020' },
+heavy: { h:'#484848',hl:'#626262',hd:'#282828', tr:'#0a0a0a',trl:'#181818', tu:'#383838',tul:'#525252' },
+elite: { h:'#3a2a5a',hl:'#524270',hd:'#1a0a3a', tr:'#0a0a0a',trl:'#1a1a2a', tu:'#2a1a4a',tul:'#403060' },
+boss1: { h:'#7a1a1a',hl:'#9a2a2a',hd:'#4a0808', tr:'#0a0a0a',trl:'#1a0a0a', tu:'#6a0a0a',tul:'#8a1818' },
+boss2: { h:'#8a6a00',hl:'#aa8a10',hd:'#5a4000', tr:'#0a0a08',trl:'#1a1a08', tu:'#7a5a00',tul:'#9a7a10' },
+boss3: { h:'#2a4a8a',hl:'#3a5aa8',hd:'#0a1a5a', tr:'#0a0a18',trl:'#1a1a28', tu:'#1a3a7a',tul:'#2a4a9a' },
+boss4: { h:'#3a3a3a',hl:'#626262',hd:'#1a1a1a', tr:'#080808',trl:'#181818', tu:'#2a2a2a',tul:'#525252' },
+boss5: { h:'#1a0a2a',hl:'#3a1a4a',hd:'#08040a', tr:'#040204',trl:'#0a060e', tu:'#120818',tul:'#281028' },
+};
+function drawTankGfx(x,y,bodyA,turretA,ck,wType,sc=1,flash=false){
+const c=TC[ck]||TC.basic;
+ctx.save();
+ctx.translate(x,y); ctx.scale(sc,sc);
+const hw=18,hh=24,tw=9;
+// ── Body ──
+ctx.save();
+ctx.shadowColor='rgba(0,0,0,0.7)'; ctx.shadowBlur=12; ctx.shadowOffsetX=3; ctx.shadowOffsetY=5;
+ctx.rotate(bodyA);
+// Tracks
+ctx.fillStyle=c.tr;
+_rr(-hw-2,-hh,tw,hh*2,2); ctx.fill();
+_rr(hw-tw+2,-hh,tw,hh*2,2); ctx.fill();
+ctx.restore();
+ctx.save(); ctx.rotate(bodyA);
+// Track segments
+ctx.fillStyle=c.trl;
+for(let i=-hh+2;i<hh-2;i+=7){
+ctx.fillRect(-hw-2,i,tw-1,3); ctx.fillRect(hw-tw+2,i,tw-1,3);
+}
+// Track inner shadow
+ctx.fillStyle='rgba(0,0,0,0.22)';
+ctx.fillRect(-hw-2,-hh,tw,hh*2); ctx.fillRect(hw-tw+2,-hh,tw,hh*2);
+// Hull gradient
+const hg=ctx.createLinearGradient(-hw,-hh,hw,hh);
+hg.addColorStop(0,c.hl); hg.addColorStop(0.45,c.h); hg.addColorStop(1,c.hd);
+ctx.fillStyle=hg;
+_rr(-hw+tw-2,-hh+2,(hw-tw+2)*2,hh*2-4,3); ctx.fill();
+// Panel detail
+ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=1;
+ctx.strokeRect(-hw+tw+1,-hh+6,(hw-tw-1)*2,hh*2-12);
+// Front armor highlight
+ctx.fillStyle=c.hl; ctx.fillRect(-hw+tw-2,-hh+2,(hw-tw+2)*2,5);
+// Hatch
+ctx.fillStyle='rgba(0,0,0,0.22)'; ctx.beginPath(); ctx.arc(0,-2,6,0,PI2); ctx.fill();
+ctx.strokeStyle='rgba(255,255,255,0.12)'; ctx.lineWidth=1; ctx.stroke();
+// Rivet detail
+ctx.fillStyle='rgba(255,255,255,0.08)';
+[[-10,-hh+8],[10,-hh+8],[-10,hh-8],[10,hh-8]].forEach(([rx,ry])=>{
+ctx.beginPath(); ctx.arc(rx,ry,2,0,PI2); ctx.fill();
+});
+ctx.restore();
+// ── Turret ──
+ctx.save(); ctx.rotate(turretA);
+// Barrel
+let bLen=26,bW=6;
+if(wType==='cannon'){bLen=34;bW=10;}
+else if(wType==='laser'){bLen=30;bW=4;}
+else if(wType==='machinegun'||wType==='minigun'){bLen=24;bW=4;}
+else if(wType==='shotgun'){bLen=20;bW=9;}
+// Barrel shadow
+ctx.fillStyle='rgba(0,0,0,0.42)'; ctx.fillRect(8,-bW/2+1.5,bLen,bW);
+// Barrel gradient
+const bg=ctx.createLinearGradient(0,-bW/2,0,bW/2);
+bg.addColorStop(0,'#707070'); bg.addColorStop(0.35,'#a0a0a0'); bg.addColorStop(0.7,'#707070'); bg.addColorStop(1,'#404040');
+ctx.fillStyle=bg; ctx.fillRect(8,-bW/2,bLen,bW);
+ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fillRect(8,-bW/2,bLen,1.5);
+// Muzzle
+ctx.fillStyle='#222'; ctx.fillRect(8+bLen-5,-bW/2-1.5,5,bW+3);
+// Laser glow on barrel
+if(wType==='laser'){
+ctx.strokeStyle='#cc00ff'; ctx.lineWidth=2; ctx.shadowColor='#ff00ff'; ctx.shadowBlur=10;
+ctx.beginPath(); ctx.moveTo(20,0); ctx.lineTo(8+bLen,0); ctx.stroke();
+}
+// Muzzle flash
+if(flash){
+glowC(8+bLen+5,0,22,'rgba(255,220,50,0.75)');
+ctx.fillStyle='#fff8aa'; ctx.beginPath(); ctx.arc(8+bLen+5,0,9,0,PI2); ctx.fill();
+}
+// Turret shadow
+ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.beginPath(); ctx.ellipse(2,2,13,11,0,0,PI2); ctx.fill();
+// Turret dome
+const tg=ctx.createRadialGradient(-4,-4,1,0,0,13);
+tg.addColorStop(0,c.tul); tg.addColorStop(0.6,c.tu); tg.addColorStop(1,'rgba(0,0,0,0.35)');
+ctx.fillStyle=tg; ctx.beginPath(); ctx.ellipse(0,0,13,11,0,0,PI2); ctx.fill();
+ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=1;
+ctx.beginPath(); ctx.ellipse(0,0,9,7.5,0,0,PI2); ctx.stroke();
+ctx.restore();
+// Damage flash
+if(flash){
+ctx.save(); ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=0.5;
+ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(0,0,25*sc,0,PI2); ctx.fill(); ctx.restore();
+}
+ctx.restore();
+}
+function _rr(x,y,w,h,r){
+ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r);
+ctx.closePath();
+}
+function drawHpBar(x,y,hp,maxHp,w=40,yOff=-32){
+const bh=4,bx=x-w/2,by=y+yOff;
+ctx.fillStyle='#111'; ctx.fillRect(bx-1,by-1,w+2,bh+2);
+const r=hp/maxHp;
+ctx.fillStyle=r>0.6?'#22cc44':r>0.3?'#ffcc00':'#ff3300';
+ctx.fillRect(bx,by,w*r,bh);
+}
+// ═══════════════════════════════════════════════════════════
+// BASE ENTITY
+// ═══════════════════════════════════════════════════════════
+let _eid=0;
+class TankEntity {
+constructor(x,y,hp,hw,hh,spd){
+this.x=x;this.y=y; this.hp=hp;this.maxHp=hp;
+this.hw=hw;this.hh=hh;this.spd=spd;
+this.bodyA=0;this.turretA=0;
+this.dead=false; this.id=_eid++;
+this.vx=0;this.vy=0;
+this.invT=0;this.flashT=0;
+}
+takeDmg(amount,ka=0,kb=0){
+if(this.invT>0) return;
+this.hp-=amount; this.flashT=160;
+if(kb>0){ this.vx+=Math.cos(ka)*kb; this.vy+=Math.sin(ka)*kb; }
+if(this.hp<=0){ this.hp=0; this.onDeath(); }
+}
+onDeath(){
+this.dead=true;
+spawnExplosion(this.x,this.y,2,['#ff6600','#ff3300','#ffcc00','#fff','#ff9900']);
+Camera.shake(8);
+}
+physUpdate(dt,map){
+if(Math.abs(this.vx)>0.005||Math.abs(this.vy)>0.005){
+const f=Math.pow(0.9,dt/16.67);
+const steps=Math.ceil(Math.max(Math.abs(this.vx*dt),Math.abs(this.vy*dt))/(TILE/2))+1;
+const sdt=dt/steps;
+for(let i=0;i<steps;i++){
+const nx=this.x+this.vx*sdt; const ny=this.y+this.vy*sdt;
+if(!map.solidAt(nx,this.y,this.hw-1,this.hh-1)) this.x=nx; else this.vx=0;
+if(!map.solidAt(this.x,ny,this.hw-1,this.hh-1)) this.y=ny; else this.vy=0;
+}
+this.vx*=f; this.vy*=f;
+}
+if(this.invT>0) this.invT-=dt;
+if(this.flashT>0) this.flashT-=dt;
+}
+}
+// ═══════════════════════════════════════════════════════════
+// PLAYER
+// ═══════════════════════════════════════════════════════════
+class Player extends TankEntity {
+constructor(x,y){
+super(x,y,100,20,24,0.15);
+this.wType='pistol'; this.w=WEAPONS.pistol;
+this.ammo=this.w.mag; this.reloading=false; this.reloadT=0; this.fireCD=0;
+this.laserHeat=0; this.laserOverheat=false;
+this.flashMuzzle=0; this.shieldT=0; this.wTimer=0;
+this.laser=null;
+this.sizeState='normal'; this.sizeTimer=0;
+this.baseHw=20; this.baseHh=24; this.sizeScale=1; this.dmgMult=1; this.szMult=1;
+}
+update(dt,map,enemies,bullets){
+this.physUpdate(dt,map);
+if(this.reloading){ this.reloadT-=dt; if(this.reloadT<=0){ this.reloading=false; this.ammo=this.w.mag; } }
+// Move
+const k=Input.keys;
+let dx=0,dy=0;
+if(k['w']||k['arrowup'])   dy-=1;
+if(k['s']||k['arrowdown']) dy+=1;
+if(k['a']||k['arrowleft']) dx-=1;
+if(k['d']||k['arrowright'])dx+=1;
+if(dx||dy){
+const len=Math.hypot(dx,dy); dx/=len; dy/=len;
+const sp=this.spd*(this.shieldT>0?1.6:1);
+const hw=this.hw-2, hh=this.hh-2;
+const nx=this.x+dx*sp*dt, ny=this.y+dy*sp*dt;
+const canX=!map.solidAt(nx,this.y,hw,hh);
+const canY=!map.solidAt(this.x,ny,hw,hh);
+if(canX) this.x=nx;
+if(canY) this.y=ny;
+// 卡墙角滑动：斜向移动时若某轴被挡，尝试沿另一轴全速滑动
+if(!canX&&!canY){
+  if(!map.solidAt(nx,this.y,hw,hh)) this.x=nx;
+  if(!map.solidAt(this.x,ny,hw,hh)) this.y=ny;
+} else if(!canX&&dy===0){
+  if(!map.solidAt(this.x,this.y+sp*dt*0.5,hw,hh)) this.y+=sp*dt*0.5;
+  else if(!map.solidAt(this.x,this.y-sp*dt*0.5,hw,hh)) this.y-=sp*dt*0.5;
+} else if(!canY&&dx===0){
+  if(!map.solidAt(this.x+sp*dt*0.5,this.y,hw,hh)) this.x+=sp*dt*0.5;
+  else if(!map.solidAt(this.x-sp*dt*0.5,this.y,hw,hh)) this.x-=sp*dt*0.5;
+}
+const ta=Math.atan2(dy,dx);
+this.bodyA=lerpA(this.bodyA,ta,Math.min(1,dt*0.016));
+}
+// Aim
+const wm=Input.worldMouse();
+this.turretA=Math.atan2(wm.y-this.y,wm.x-this.x);
+// Fire
+if(!this.reloading){
+if(this.w.isLaser){
+if(Input.mdown) this._fireLaser(dt,map,enemies);
+else this.laser=null;
+} else {
+this.fireCD-=dt;
+if(Input.mdown&&this.fireCD<=0&&this.ammo>0) this._fire(bullets);
+if(this.ammo<=0&&!this.reloading) this._startReload();
+}
+}
+// Weapon timer
+if(this.wType!=='pistol'&&this.wTimer>0){
+this.wTimer-=dt;
+if(this.wTimer<=0) this.setWeapon('pistol');
+}
+if(this.shieldT>0){ this.shieldT-=dt; this.invT=this.shieldT>0?999:0; }
+if(this.flashMuzzle>0) this.flashMuzzle-=dt;
+if(!this.w.isLaser) this.laser=null;
+if(this.sizeTimer>0){ this.sizeTimer-=dt; if(this.sizeTimer<=0) this._clearSize(); }
+}
+_fire(bullets){
+this.fireCD=this.w.fireRate; this.ammo--; this.flashMuzzle=130;
+const blen=this._barrelLen();
+const bx=this.x+Math.cos(this.turretA)*blen;
+const by=this.y+Math.sin(this.turretA)*blen;
+const wmod=(this.dmgMult!==1||this.szMult!==1)
+?{...this.w,dmg:this.w.dmg*this.dmgMult,sz:this.w.sz*this.szMult,explDmg:(this.w.explDmg||0)*this.dmgMult}
+:this.w;
+for(let i=0;i<this.w.cnt;i++){
+const spread=(Math.random()-0.5)*this.w.spread;
+bullets.push(new Bullet(bx,by,this.turretA+spread,wmod,this.id,true));
+}
+spawnMuzzle(bx,by,this.turretA,this.w.sz*this.szMult);
+}
+_fireLaser(dt,map,enemies){
+const blen=this._barrelLen();
+const bx=this.x+Math.cos(this.turretA)*blen;
+const by=this.y+Math.sin(this.turretA)*blen;
+this.laser=new LaserBeam(bx,by,this.turretA,this.w.dmg*this.dmgMult);
+this.laser.cast(map,enemies);
+if(this.laser.hitTarget) this.laser.hitTarget.takeDmg(this.w.dmg*this.dmgMult,this.turretA,0);
+}
+_startReload(){ this.reloading=true; this.reloadT=this.w.reload; }
+_applyBig(){
+this._clearSize();
+this.sizeState='big'; this.sizeTimer=12000;
+this.hp=Math.min(this.hp*2, 999); this.maxHp=200;
+this.hw=this.baseHw*1.8; this.hh=this.baseHh*1.8; this.sizeScale=1.8;
+}
+_applySmall(){
+this._clearSize();
+this.sizeState='small'; this.sizeTimer=12000;
+this.hw=this.baseHw*0.38; this.hh=this.baseHh*0.38; this.sizeScale=0.42;
+this.dmgMult=1.8; this.szMult=0.5;
+}
+_clearSize(){
+if(this.sizeState==='big'){ this.hp=Math.min(this.hp,100); this.maxHp=100; }
+this.sizeState='normal'; this.sizeTimer=0;
+this.hw=this.baseHw; this.hh=this.baseHh; this.sizeScale=1;
+this.dmgMult=1; this.szMult=1;
+}
+_barrelLen(){ const m={'cannon':42,'laser':38,'machinegun':32,'minigun':32,'shotgun':28}; return m[this.wType]||34; }
+setWeapon(type){
+this.wType=type; this.w=WEAPONS[type];
+this.ammo=this.w.mag; this.reloading=false; this.reloadT=0; this.fireCD=0;
+this.laserHeat=0; this.laserOverheat=false;
+this.wTimer=type==='pistol'?0:22000;
+}
+collect(pup){
+if(WEAPONS[pup.type]){ this.setWeapon(pup.type); }
+else if(pup.type==='health'){ this.hp=Math.min(this.maxHp,this.hp+50); }
+else if(pup.type==='shield'){ this.shieldT=6000; this.invT=6000; }
+else if(pup.type==='resize'){ if(Math.random()<0.5) this._applyBig(); else this._applySmall(); }
+pup.collected=true;
+}
+draw(){
+if(this.shieldT>0){
+const a=0.3+Math.sin(Date.now()*0.009)*0.12;
+glowC(this.x,this.y,42,`rgba(68,136,255,${a})`);
+ctx.save(); ctx.strokeStyle=`rgba(68,136,255,${0.65+Math.sin(Date.now()*0.009)*0.2})`; ctx.lineWidth=2;
+ctx.beginPath(); ctx.arc(this.x,this.y,40,0,PI2); ctx.stroke(); ctx.restore();
+}
+if(this.sizeState==='big')
+glowC(this.x,this.y,52*this.sizeScale,`rgba(255,100,0,${0.15+Math.sin(Date.now()*0.006)*0.07})`);
+else if(this.sizeState==='small')
+glowC(this.x,this.y,30,`rgba(0,200,255,${0.2+Math.sin(Date.now()*0.008)*0.1})`);
+const flash=this.flashT>0&&Math.floor(this.flashT/85)%2===0;
+drawTankGfx(this.x,this.y,this.bodyA,this.turretA,'player',this.wType,this.sizeScale,flash||(this.flashMuzzle>0));
+if(this.laser) this.laser.draw();
+// Player HP bar at bottom
+}
+}
+// ═══════════════════════════════════════════════════════════
+// ENEMY
+// ═══════════════════════════════════════════════════════════
+class Enemy extends TankEntity {
+constructor(x,y,type){
+const C={
+basic:{ hp:80, hw:20,hh:24,spd:0.06, fr:1500,dmg:15, ck:'basic', det:340,rng:310 },
+fast: { hp:60, hw:18,hh:22,spd:0.12, fr:1200,dmg:10, ck:'fast',  det:380,rng:290 },
+heavy:{ hp:180,hw:24,hh:28,spd:0.04, fr:2000,dmg:25, ck:'heavy', det:300,rng:340 },
+elite:{ hp:120,hw:20,hh:24,spd:0.09, fr:1000,dmg:20, ck:'elite', det:450,rng:360 },
+};
+const cfg=C[type]||C.basic;
+super(x,y,cfg.hp,cfg.hw,cfg.hh,cfg.spd);
+this.type=type; this.ck=cfg.ck; this.fr=cfg.fr; this.dmg=cfg.dmg;
+this.det=cfg.det; this.rng=cfg.rng;
+this.state='patrol'; this.fireCD=rnd(0,cfg.fr);
+this.patAngle=rnd(0,PI2); this.patTimer=rnd(1000,3000);
+this.wType=type==='heavy'?'cannon':type==='elite'?'machinegun':'pistol';
+this.flashMuzzle=0;
+this.score=type==='heavy'?200:type==='fast'?150:type==='elite'?300:100;
+this.sc=type==='heavy'?1.25:1;
+}
+update(dt,map,player,bullets){
+if(this.dead) return;
+this.physUpdate(dt,map);
+const d=dist(this,player);
+const los=map.hasLOS(this.x,this.y,player.x,player.y);
+switch(this.state){
+case 'patrol': this._patrol(dt,map);
+if(los&&d<this.det) this.state=d<this.rng?'attack':'chase'; break;
+case 'chase':  this._chase(dt,map,player);
+if(d<this.rng&&los) this.state='attack';
+else if(!los||d>this.det*1.4) this.state='patrol'; break;
+case 'attack': this._attack(dt,map,player);
+if(d>this.rng*1.25) this.state='chase'; break;
+}
+this.fireCD-=dt;
+if(this.state!=='patrol'&&los&&d<this.rng&&this.fireCD<=0) this._fire(player,bullets);
+if(this.flashMuzzle>0) this.flashMuzzle-=dt;
+}
+_patrol(dt,map){
+this.patTimer-=dt;
+if(this.patTimer<=0){ this.patAngle=rnd(0,PI2); this.patTimer=rnd(800,2500); }
+const nx=this.x+Math.cos(this.patAngle)*this.spd*dt;
+const ny=this.y+Math.sin(this.patAngle)*this.spd*dt;
+let moved=false;
+if(!map.solidAt(nx,this.y,this.hw-1,this.hh-1)){ this.x=nx; moved=true; }
+if(!map.solidAt(this.x,ny,this.hw-1,this.hh-1)){ this.y=ny; moved=true; }
+if(!moved){ this.patAngle+=Math.PI+rnd(-0.4,0.4); this.patTimer=rnd(500,1500); }
+this.bodyA=lerpA(this.bodyA,this.patAngle,dt*0.008); this.turretA=this.bodyA;
+}
+_chase(dt,map,player){
+const a=ang(this,player);
+const nx=this.x+Math.cos(a)*this.spd*dt;
+const ny=this.y+Math.sin(a)*this.spd*dt;
+if(!map.solidAt(nx,this.y,this.hw-1,this.hh-1)) this.x=nx;
+if(!map.solidAt(this.x,ny,this.hw-1,this.hh-1)) this.y=ny;
+this.bodyA=lerpA(this.bodyA,a,dt*0.01); this.turretA=lerpA(this.turretA,a,dt*0.015);
+}
+_attack(dt,map,player){
+const a=ang(this,player);
+this.turretA=lerpA(this.turretA,a,dt*0.015);
+if(Math.random()<0.0015*dt){ this.bodyA+=(Math.random()<0.5?1:-1)*Math.PI/2; }
+const sa=this.bodyA+Math.PI/2;
+const nx=this.x+Math.cos(sa)*this.spd*0.4*dt;
+const ny=this.y+Math.sin(sa)*this.spd*0.4*dt;
+if(!map.solidAt(nx,this.y,this.hw-1,this.hh-1)) this.x=nx;
+if(!map.solidAt(this.x,ny,this.hw-1,this.hh-1)) this.y=ny;
+}
+_fire(player,bullets){
+this.fireCD=this.fr+rnd(-200,200); this.flashMuzzle=100;
+const barA=this.turretA+rnd(-0.1,0.1);
+const blen=34*this.sc;
+const bx=this.x+Math.cos(this.turretA)*blen;
+const by=this.y+Math.sin(this.turretA)*blen;
+const wdef={...WEAPONS[this.wType],dmg:this.dmg};
+bullets.push(new Bullet(bx,by,barA,wdef,this.id,false));
+}
+draw(){
+if(this.dead) return;
+const flash=this.flashT>0&&Math.floor(this.flashT/85)%2===0;
+drawTankGfx(this.x,this.y,this.bodyA,this.turretA,this.ck,this.wType,this.sc,flash);
+drawHpBar(this.x,this.y,this.hp,this.maxHp,44,-34*this.sc);
+}
+}
+// ═══════════════════════════════════════════════════════════
+// BOSS
+// ═══════════════════════════════════════════════════════════
+class Boss extends TankEntity {
+constructor(x,y,type){
+const C={
+boss1:{ hp:500,  hw:28,hh:34,spd:0.055,ck:'boss1',sc:1.5,name:'钢铁中士',   wt:'shotgun'  },
+boss2:{ hp:800,  hw:30,hh:36,spd:0.11, ck:'boss2',sc:1.6,name:'沙漠毒蛇',   wt:'machinegun'},
+boss3:{ hp:1100, hw:34,hh:40,spd:0.04, ck:'boss3',sc:1.8,name:'冰霜指挥官', wt:'cannon'   },
+boss4:{ hp:1500, hw:38,hh:46,spd:0.06, ck:'boss4',sc:2.0,name:'都市暴君',   wt:'minigun'  },
+boss5:{ hp:2500, hw:44,hh:54,spd:0.07, ck:'boss5',sc:2.4,name:'最终指挥官', wt:'laser'    },
+};
+const cfg=C[type]||C.boss1;
+super(x,y,cfg.hp,cfg.hw*cfg.sc,cfg.hh*cfg.sc,cfg.spd);
+this.bType=type; this.ck=cfg.ck; this.sc=cfg.sc; this.bname=cfg.name; this.wt=cfg.wt;
+this.isBoss=true; this.score=2000;
+this.fireCD=1500; this.fireCD2=3000; this.stateT=0;
+this.phase=1; this.bstate='approach';
+this.chargeT=0; this.chargeDx=0; this.chargeDy=0;
+this.summonCd=0; this.laserBeam=null;
+this.anim=0; this.flashMuzzle=0;
+}
+get phaseRatio(){ return this.hp/this.maxHp; }
+update(dt,map,player,bullets,spawnEnemy){
+if(this.dead) return;
+this.physUpdate(dt,map);
+this.stateT+=dt; this.anim+=dt*0.002;
+if(this.flashMuzzle>0) this.flashMuzzle-=dt;
+// Phase transition
+if(this.phase===1&&this.phaseRatio<0.5){
+this.phase=2; spawnExplosion(this.x,this.y,1.5);
+Camera.shake(18);
+}
+if(this.phase<3&&this.phaseRatio<0.25&&this.bType==='boss5'){
+this.phase=3; spawnExplosion(this.x,this.y,2);
+Camera.shake(22);
+}
+const d=dist(this,player);
+const los=map.hasLOS(this.x,this.y,player.x,player.y);
+this.turretA=lerpA(this.turretA,ang(this,player),dt*0.02);
+// AI by type
+switch(this.bType){
+case 'boss1': this._aiBoss1(dt,map,player,bullets,spawnEnemy,d,los); break;
+case 'boss2': this._aiBoss2(dt,map,player,bullets,d,los); break;
+case 'boss3': this._aiBoss3(dt,map,player,bullets,d,los); break;
+case 'boss4': this._aiBoss4(dt,map,player,bullets,spawnEnemy,d,los); break;
+case 'boss5': this._aiBoss5(dt,map,player,bullets,spawnEnemy,d,los); break;
+}
+}
+_move(dt,map,a,sp){
+const nx=this.x+Math.cos(a)*sp*dt;
+const ny=this.y+Math.sin(a)*sp*dt;
+if(!map.solidAt(nx,this.y,this.hw-1,this.hh-1)) this.x=nx;
+if(!map.solidAt(this.x,ny,this.hw-1,this.hh-1)) this.y=ny;
+this.bodyA=lerpA(this.bodyA,a,dt*0.012);
+}
+_fireAt(player,bullets,spread=0.06,dmg=30){
+this.flashMuzzle=150;
+const a=this.turretA+rnd(-spread,spread);
+const blen=40*this.sc;
+bullets.push(new Bullet(
+this.x+Math.cos(this.turretA)*blen, this.y+Math.sin(this.turretA)*blen,
+a,{...WEAPONS['machinegun'],dmg,spd:0.4,sz:5,col:'#ff2200',glow:'#ff6600',trail:8,expl:false,kbk:3},
+this.id,false
+));
+}
+_aiBoss1(dt,map,player,bullets,spawnEnemy,d,los){
+// Patrol + burst fire + summon
+this._move(dt,map,ang(this,player)+Math.sin(this.stateT*0.001)*0.8,this.spd);
+this.fireCD-=dt;
+if(los&&this.fireCD<=0){
+for(let i=0;i<3;i++) this._fireAt(player,bullets,0.15,20);
+this.fireCD=1800+(this.phase===2?-600:0);
+}
+this.summonCd-=dt;
+if(this.summonCd<=0&&this.phase===2){ this.summonCd=8000; spawnEnemy('basic',this.x+rnd(-80,80),this.y+rnd(-80,80)); }
+}
+_aiBoss2(dt,map,player,bullets,d,los){
+// Charge attacks
+if(this.bstate==='approach'){
+this._move(dt,map,ang(this,player),this.spd);
+this.fireCD-=dt;
+if(los&&this.fireCD<=0){ this._fireAt(player,bullets,0.1,15); this.fireCD=this.phase===2?300:600; }
+if(this.stateT>4000&&d>120){ this.bstate='charge'; this.stateT=0; this.chargeDx=Math.cos(ang(this,player)); this.chargeDy=Math.sin(ang(this,player)); }
+} else if(this.bstate==='charge'){
+this._move(dt,map,Math.atan2(this.chargeDy,this.chargeDx),this.spd*3.5);
+this.chargeT+=dt; if(this.chargeT>800){ this.bstate='approach'; this.stateT=0; this.chargeT=0; }
+}
+}
+_aiBoss3(dt,map,player,bullets,d,los){
+// Heavy armor, spread shots
+this._move(dt,map,ang(this,player)+Math.PI/4,this.spd*0.5);
+this.fireCD-=dt;
+if(los&&this.fireCD<=0){
+const shots=this.phase===2?8:4;
+for(let i=0;i<shots;i++){
+const a=this.turretA+i*(PI2/shots)*(this.phase===2?1:0.5)-1;
+const blen=50*this.sc;
+bullets.push(new Bullet(
+this.x+Math.cos(a)*blen,this.y+Math.sin(a)*blen,a,
+{...WEAPONS['cannon'],dmg:40,spd:0.28,sz:6,col:'#4488ff',glow:'#2266ff',trail:8,expl:true,explR:60,explDmg:30,kbk:4},
+this.id,false
+));
+}
+this.fireCD=this.phase===2?2200:3000;
+}
+}
+_aiBoss4(dt,map,player,bullets,spawnEnemy,d,los){
+// Machine gun rain + summon
+const patAngle=Math.sin(this.stateT*0.0008)*Math.PI;
+this._move(dt,map,patAngle,this.spd);
+this.fireCD-=dt;
+if(los&&this.fireCD<=0){
+for(let i=0;i<(this.phase===2?3:1);i++) this._fireAt(player,bullets,0.05,18);
+this.fireCD=this.phase===2?80:130;
+}
+this.summonCd-=dt;
+if(this.summonCd<=0){ this.summonCd=10000; spawnEnemy('fast',this.x+rnd(-120,120),this.y+rnd(-100,100)); spawnEnemy('fast',this.x+rnd(-120,120),this.y+rnd(-100,100)); }
+}
+_aiBoss5(dt,map,player,bullets,spawnEnemy,d,los){
+// Final boss: all patterns
+this._move(dt,map,ang(this,player)+Math.sin(this.stateT*0.0006)*1.2,this.spd);
+this.fireCD-=dt; this.fireCD2-=dt;
+if(los&&this.fireCD<=0){
+const sp=this.phase===3?0.03:0.07;
+for(let i=0;i<(this.phase>=2?6:4);i++) this._fireAt(player,bullets,sp,25*(this.phase>=2?1.5:1));
+this.fireCD=this.phase===3?350:550;
+}
+if(this.phase>=2&&this.fireCD2<=0&&los){
+// Cannon volley
+for(let i=0;i<3;i++){
+const a=ang(this,player)+rnd(-0.25,0.25);
+const blen=55*this.sc;
+bullets.push(new Bullet(
+this.x+Math.cos(a)*blen,this.y+Math.sin(a)*blen,a,
+{...WEAPONS['cannon'],dmg:60,spd:0.3,sz:8,col:'#ff00ff',glow:'#cc00ff',trail:8,expl:true,explR:90,explDmg:40,kbk:6},
+this.id,false
+));
+}
+this.fireCD2=4000;
+}
+this.summonCd-=dt;
+if(this.summonCd<=0&&this.phase>=2){ this.summonCd=7000; spawnEnemy('elite',this.x+rnd(-150,150),this.y+rnd(-120,120)); }
+}
+draw(){
+if(this.dead) return;
+// Aura
+const auraC=['boss1','boss2'].includes(this.bType)?'rgba(255,100,0,':'rgba(80,40,200,';
+glowC(this.x,this.y,50*this.sc,`${auraC}${0.12+Math.sin(this.anim*4)*0.06})`);
+const flash=this.flashT>0&&Math.floor(this.flashT/85)%2===0;
+drawTankGfx(this.x,this.y,this.bodyA,this.turretA,this.ck,this.wt,this.sc,flash||(this.flashMuzzle>0));
+// Phase indicator rings
+if(this.phase>=2){
+ctx.save(); ctx.strokeStyle='rgba(255,100,0,0.4)'; ctx.lineWidth=2;
+ctx.beginPath(); ctx.arc(this.x,this.y,40*this.sc+Math.sin(this.anim*6)*4,0,PI2); ctx.stroke();
+ctx.restore();
+}
+// Boss HP bar drawn on HUD
+}
+}
+// ═══════════════════════════════════════════════════════════
+// HUD
+// ═══════════════════════════════════════════════════════════
+function drawHUD(player,level,levelIdx,score,lives,bossHp,bossMaxHp,bossName){
+// Top bar border
+ctx.save();
+ctx.strokeStyle='#1a3a1a'; ctx.lineWidth=2;
+ctx.beginPath(); ctx.moveTo(0,52); ctx.lineTo(CW,52); ctx.stroke();
+// Level name
+txtC(level,CW/2,16,14,'#88cc88','#000');
+txtC(`第 ${levelIdx+1} 关`,CW/2,34,11,'#66aa66','#000');
+// Score
+txtC(`分数：${score}`,80,26,13,'#ffcc44','#000');
+// Lives (tank icons)
+txtC('命：',CW-200,26,12,'#ff8888','#000');
+for(let i=0;i<lives;i++){
+ctx.save(); ctx.translate(CW-175+i*28,26);
+ctx.scale(0.45,0.45); drawTankGfx(0,0,-Math.PI/2,0,'player','pistol',1,false);
+ctx.restore();
+}
+// Boss HP bar (if boss exists)
+if(bossHp!==null){
+const bw=400, bx=(CW-bw)/2, by=60;
+const r=bossHp/bossMaxHp;
+const bc=r>0.5?`#ff${Math.floor((1-r)*510).toString(16).padStart(2,'0')}00`:'#ff0000';
+ctx.strokeStyle='#cc3300'; ctx.lineWidth=2;
+ctx.strokeRect(bx-1,by-1,bw+2,14);
+ctx.fillStyle=bc; ctx.fillRect(bx,by,bw*r,12);
+txtC(`⚔ ${bossName} ⚔`,CW/2,by+20,11,'#ffaa44','#000');
+}
+// Player health bar (bottom left)
+const phx=20, phy=CH-90, phw=220;
+ctx.strokeStyle='#004400'; ctx.lineWidth=2;
+ctx.strokeRect(phx-1,phy-1,phw+2,14);
+const hr=player.hp/player.maxHp;
+const hc=hr>0.5?'#22dd44':hr>0.25?'#ffcc00':'#ff3300';
+ctx.fillStyle=hc; ctx.fillRect(phx,phy,phw*hr,12);
+txtC(`HP ${player.hp}/${player.maxHp}`,phx+phw/2,phy+20,11,'#88ff88','#000');
+// Weapon name (bottom left, below health)
+txtC(`${player.w.name}`,phx+phw/2,phy+38,13,'#ffee88','#000');
+if(player.w.isLaser){
+txtC('∞ 无限弹药',phx+phw/2,phy+56,12,'#ff88ff','#000');
+} else {
+// Ammo display (below health bar)
+const totalMag=player.w.mag;
+const showMax=Math.min(totalMag,20);
+const ammoX=phx, ammoY=phy+50;
+for(let i=0;i<showMax;i++){
+const filled=(totalMag-i)<=player.ammo;
+ctx.fillStyle=filled?player.w.col:'#333333';
+ctx.fillRect(ammoX+i*(phw/showMax),ammoY,Math.max(3,(phw/showMax)-2),10);
+}
+if(player.reloading){
+const rp=1-(player.reloadT/player.w.reload);
+ctx.strokeStyle='#00aaff'; ctx.lineWidth=1.5;
+ctx.strokeRect(phx-1,phy+64,phw+2,9);
+ctx.fillStyle='#00aaff'; ctx.fillRect(phx,phy+65,phw*rp,7);
+txtC('换弹中...',phx+phw/2,phy+80,10,'#66aaff','#000');
+} else {
+txtC(`${player.ammo} / ${totalMag}`,phx+phw/2,phy+72,10,'#cccccc','#000');
+}
+}
+// Weapon timer (if special weapon)
+if(player.wType!=='pistol'&&player.wTimer>0){
+const tp=player.wTimer/22000;
+ctx.strokeStyle='#ffcc00'; ctx.lineWidth=1;
+ctx.strokeRect(phx-1,phy+36,phw+2,5);
+ctx.fillStyle='#ffcc00'; ctx.fillRect(phx,phy+37,phw*tp,3);
+}
+// ── 体型状态指示器（居中底部）
+if(player.sizeState!=='normal'){
+const isBig=player.sizeState==='big';
+const siColor=isBig?'#ff8800':'#00ccff';
+const secs=Math.max(0,Math.ceil(player.sizeTimer/1000));
+const tp2=Math.max(0,player.sizeTimer/12000);
+const siX=CW/2-130, siY=CH-76;
+ctx.fillStyle=isBig?'rgba(255,100,0,0.15)':'rgba(0,180,255,0.15)';
+rRect(siX,siY,260*tp2,34,5); ctx.fill();
+ctx.strokeStyle=siColor; ctx.lineWidth=2; rRect(siX,siY,260,34,5); ctx.stroke();
+txtC(isBig?`⬆ 巨大化  ${secs}s`:`⬇ 迷你化  ${secs}s`,CW/2,siY+11,13,siColor,'#000');
+txtC(isBig?'血量翻倍  体型膨胀  更易中弹':'体型极小  伤害 +80%  难以命中',CW/2,siY+25,10,'#dddddd','#000');
+}
+ctx.restore();
+}
+// ═══════════════════════════════════════════════════════════
+// GAME
+// ═══════════════════════════════════════════════════════════
+const Game = {
+state:'menu', // menu | playing | levelComplete | gameOver | pause
+levelIdx:0, score:0, lives:1,
+player:null, map:null, enemies:[], boss:null, bullets:[], pups:[],
+lastTime:0, menuAnim:0, pupSpawnTimer:0, pupCandidates:[],
+_playerReach:null,
+_btnRect:null,
+_computeReachMask(hw,hh,sx,sy){
+  if(!this.map) return null;
+  const h=this.map.h,w=this.map.w;
+  const mask=Array.from({length:h},()=>Array(w).fill(false));
+  const canFit=(tx,ty)=>{
+    if(tx<1||ty<1||tx>=w-1||ty>=h-1) return false;
+    const cx=(tx+0.5)*TILE,cy=(ty+0.5)*TILE;
+    return !this.map.solidAt(cx,cy,Math.max(1,hw-1),Math.max(1,hh-1));
+  };
+  let stx=clamp(Math.floor(sx/TILE),1,w-2), sty=clamp(Math.floor(sy/TILE),1,h-2);
+  if(!canFit(stx,sty)){
+    const s=this._findNearestFreeSpot(sx,sy,hw,hh,{maxR:Math.max(w,h)});
+    if(!s) return mask;
+    stx=s.tx; sty=s.ty;
+  }
+  const q=[[stx,sty]]; mask[sty][stx]=true;
+  while(q.length){
+    const [tx,ty]=q.shift();
+    for(const [dx,dy] of DIR4){
+      const nx=tx+dx,ny=ty+dy;
+      if(nx<1||ny<1||nx>=w-1||ny>=h-1||mask[ny][nx]) continue;
+      if(!canFit(nx,ny)) continue;
+      mask[ny][nx]=true; q.push([nx,ny]);
+    }
+  }
+  return mask;
+},
+_findNearestFreeSpot(x,y,hw,hh,opt={}){
+  if(!this.map) return null;
+  const maxR=opt.maxR??24;
+  const reach=opt.reach||null;
+  const w=this.map.w,h=this.map.h;
+  const stx=clamp(Math.floor(x/TILE),1,w-2);
+  const sty=clamp(Math.floor(y/TILE),1,h-2);
+  const fits=(tx,ty)=>{
+    if(tx<1||ty<1||tx>=w-1||ty>=h-1) return false;
+    if(reach&&(!reach[ty]||!reach[ty][tx])) return false;
+    const cx=(tx+0.5)*TILE,cy=(ty+0.5)*TILE;
+    return !this.map.solidAt(cx,cy,Math.max(1,hw-1),Math.max(1,hh-1));
+  };
+  if(fits(stx,sty)) return {x:(stx+0.5)*TILE,y:(sty+0.5)*TILE,tx:stx,ty:sty};
+  for(let r=1;r<=maxR;r++){
+    for(let dy=-r;dy<=r;dy++){
+      for(let dx=-r;dx<=r;dx++){
+        if(Math.max(Math.abs(dx),Math.abs(dy))!==r) continue;
+        const tx=stx+dx,ty=sty+dy;
+        if(!fits(tx,ty)) continue;
+        return {x:(tx+0.5)*TILE,y:(ty+0.5)*TILE,tx,ty};
+      }
+    }
+  }
+  return null;
+},
+_carveOpenArea(x,y,hw,hh,padTiles=1){
+  if(!this.map) return;
+  const x0=clamp(Math.floor((x-hw)/TILE)-padTiles,1,this.map.w-2);
+  const y0=clamp(Math.floor((y-hh)/TILE)-padTiles,1,this.map.h-2);
+  const x1=clamp(Math.floor((x+hw)/TILE)+padTiles,1,this.map.w-2);
+  const y1=clamp(Math.floor((y+hh)/TILE)+padTiles,1,this.map.h-2);
+  let changed=false;
+  for(let ty=y0;ty<=y1;ty++){
+    for(let tx=x0;tx<=x1;tx++){
+      if(this.map.tiles[ty][tx]!==T){
+        this.map.tiles[ty][tx]=T;
+        delete this.map.brickHp[`${tx},${ty}`];
+        changed=true;
+      }
+    }
+  }
+  if(changed)this.map._buildCanvas();
+},
+_unstickEntity(e){
+  if(!e||e.dead||!this.map) return;
+  if(!this.map.solidAt(e.x,e.y,Math.max(1,e.hw-1),Math.max(1,e.hh-1))) return;
+  const safe=this._findNearestFreeSpot(e.x,e.y,e.hw,e.hh,{maxR:Math.max(this.map.w,this.map.h)});
+  if(!safe) return;
+  e.x=safe.x; e.y=safe.y; e.vx=0; e.vy=0;
+},
+init(){
+  Input.init();
+  this.showMenu();
+},
+showMenu(){
+this.state='menu'; this.menuAnim=0;
+},
+handleClick(mx,my){
+if(this.state==='menu'){ this.startGame(); return; }
+// For levelComplete and gameOver, only respond to button clicks
+if(this._btnRect){
+const b=this._btnRect;
+if(mx<b.x||mx>b.x+b.w||my<b.y||my>b.y+b.h) return;
+}
+if(this.state==='gameOver') this.startGame();
+else if(this.state==='levelComplete'){
+if(this.levelIdx>=LEVELS.length-1) this.showMenu();
+else this.nextLevel();
+}
+},
+startGame(){
+this.levelIdx=0; this.score=0; this.lives=1;
+this.loadLevel();
+this.state='playing';
+},
+loadLevel(){
+const ld=LEVELS[this.levelIdx];
+const mapTiles=prepareLevelMap(ld);
+this.map=new GameMap(mapTiles,ld.theme);
+const ps={x:(ld.pStart.tx+0.5)*TILE, y:(ld.pStart.ty+0.5)*TILE};
+this.player=new Player(ps.x,ps.y);
+const pSafe=this._findNearestFreeSpot(ps.x,ps.y,this.player.hw,this.player.hh,{maxR:Math.max(this.map.w,this.map.h)});
+if(pSafe){ this.player.x=pSafe.x; this.player.y=pSafe.y; }
+this._playerReach=this._computeReachMask(this.player.hw,this.player.hh,this.player.x,this.player.y);
+this.enemies=[];
+for(const ed of ld.enemies){
+const ex=(ed.tx+0.5)*TILE;
+const ey=(ed.ty+0.5)*TILE;
+const en=new Enemy(ex,ey,ed.t);
+const eSafe=this._findNearestFreeSpot(ex,ey,en.hw,en.hh,{maxR:Math.max(this.map.w,this.map.h),reach:this._playerReach});
+if(eSafe){ en.x=eSafe.x; en.y=eSafe.y; this.enemies.push(en); }
+}
+const bd=ld.boss;
+const bx=(bd.tx+0.5)*TILE, by=(bd.ty+0.5)*TILE;
+this.boss=new Boss(bx,by,bd.t);
+this._carveOpenArea(bx,by,this.boss.hw,this.boss.hh,2);
+const bSafe=this._findNearestFreeSpot(bx,by,this.boss.hw,this.boss.hh,{maxR:Math.max(this.map.w,this.map.h),reach:this._playerReach});
+if(bSafe){ this.boss.x=bSafe.x; this.boss.y=bSafe.y; }
+this._playerReach=this._computeReachMask(this.player.hw,this.player.hh,this.player.x,this.player.y);
+this.bullets=[];
+this.pups=[];
+this.bossHandled=false;
+this._initPupCandidates();
+this._spawnOnePup();
+this.pupSpawnTimer=20000;
+Camera.x=clamp(this.player.x-CW/2,0,Math.max(0,this.map.pixW-CW));
+Camera.y=clamp(this.player.y-CH/2,0,Math.max(0,this.map.pixH-CH));
+Camera.tx=Camera.x; Camera.ty=Camera.y;
+},
+spawnEnemy(type,x,y){
+if(!this.map) return;
+const en=new Enemy(clamp(x,TILE,this.map.pixW-TILE),clamp(y,TILE,this.map.pixH-TILE),type);
+const reach=this._computeReachMask(this.player.hw,this.player.hh,this.player.x,this.player.y);
+const safe=this._findNearestFreeSpot(en.x,en.y,en.hw,en.hh,{maxR:18,reach});
+if(!safe) return;
+en.x=safe.x; en.y=safe.y;
+this.enemies.push(en);
+},
+respawnPlayer(){
+const ld=LEVELS[this.levelIdx];
+const ps={x:(ld.pStart.tx+0.5)*TILE,y:(ld.pStart.ty+0.5)*TILE};
+this.player.x=ps.x; this.player.y=ps.y;
+this.player._clearSize();
+this.player.hp=this.player.maxHp;
+this.player.dead=false;
+this.player.invT=3000; // 3s invincibility
+this.player.setWeapon('pistol');
+this.player.vx=this.player.vy=0;
+const pSafe=this._findNearestFreeSpot(this.player.x,this.player.y,this.player.hw,this.player.hh,{maxR:Math.max(this.map.w,this.map.h)});
+if(pSafe){ this.player.x=pSafe.x; this.player.y=pSafe.y; }
+this._playerReach=this._computeReachMask(this.player.hw,this.player.hh,this.player.x,this.player.y);
+},
+update(dt){
+this.menuAnim+=dt;
+if(this.state==='gameOver') return;
+if(this.state!=='playing') return;
+Camera.update();
+Camera.follow(this.player,this.map.pixW,this.map.pixH);
+// Update player
+if(!this.player.dead){
+this.player.update(dt,this.map,this.enemies.concat(this.boss?[this.boss]:[]),this.bullets);
+this._unstickEntity(this.player);
+}
+else if(this.player.flashT>0) this.player.flashT-=dt;
+// Update enemies
+for(const e of this.enemies){
+e.update(dt,this.map,this.player,this.bullets);
+this._unstickEntity(e);
+}
+// Update boss
+if(this.boss&&!this.boss.dead){
+this.boss.update(dt,this.map,this.player,this.bullets,(t,x,y)=>this.spawnEnemy(t,x,y));
+this._unstickEntity(this.boss);
+}
+// Update bullets
+for(const b of this.bullets) b.update(dt,this.map);
+// Bullet → tank collision
+for(const b of this.bullets){
+if(b.dead) continue;
+if(b.isPlayer){
+// Check enemies
+for(const e of this.enemies){
+if(!e.dead&&Math.hypot(b.x-e.x,b.y-e.y)<e.hw+b.sz){
+e.takeDmg(b.dmg,b.angle,b.kbk);
+if(e.dead){ this.score+=e.score; spawnExplosion(e.x,e.y,1.8); }
+b.die(); break;
+}
+}
+// Check boss
+if(!b.dead&&this.boss&&!this.boss.dead){
+if(Math.hypot(b.x-this.boss.x,b.y-this.boss.y)<this.boss.hw+b.sz){
+this.boss.takeDmg(b.dmg,b.angle,b.kbk);
+// boss death handled below
+b.die();
+}
+}
+// Explosion splash
+if(b._splashed&&b.explR>0){
+const targets=[...this.enemies,this.boss].filter(e=>e&&!e.dead);
+for(const e of targets){
+const d=Math.hypot(b.x-e.x,b.y-e.y);
+if(d<b.explR+e.hw){ const ed=b.explDmg*(1-d/(b.explR+e.hw)); e.takeDmg(ed,ang(b,e),3); }
+}
+}
+} else {
+// Enemy bullets → player
+if(!this.player.dead&&Math.hypot(b.x-this.player.x,b.y-this.player.y)<this.player.hw+b.sz){
+this.player.takeDmg(b.dmg,b.angle,b.kbk);
+b.die();
+}
+}
+}
+// Clean dead bullets
+for(let i=this.bullets.length-1;i>=0;i--) if(this.bullets[i].dead) this.bullets.splice(i,1);
+// Clean dead enemies
+for(let i=this.enemies.length-1;i>=0;i--) if(this.enemies[i].dead) this.enemies.splice(i,1);
+// Clean dead particles
+for(let i=particles.length-1;i>=0;i--) if(particles[i].dead) particles.splice(i,1);
+// Limit particles
+if(particles.length>300) particles.splice(0,particles.length-300);
+// Unified boss death handler (covers bullet / explosion / laser kills)
+if(this.boss&&this.boss.dead&&!this.bossHandled){
+this.bossHandled=true;
+this.score+=this.boss.score;
+spawnExplosion(this.boss.x,this.boss.y,3.5);
+Camera.shake(25);
+this._dropBoss(this.boss.x,this.boss.y,this.boss.bType);
+}
+// PowerUp collection
+for(const p of this.pups){
+if(!p.collected&&!this.player.dead&&!(p.collectCooldown>0)){
+if(Math.hypot(this.player.x-p.x,this.player.y-p.y)<this.player.hw+p.r){
+this.player.collect(p);
+spawnExplosion(p.x,p.y,0.8,['#ffcc00','#00ff88','#fff']);
+}
+}
+p.update(dt);
+}
+// Player death
+if(this.player.dead&&this.player.flashT<=0){
+this.lives--;
+if(this.lives<=0){ this.state='gameOver'; return; }
+this.respawnPlayer();
+}
+// Pup spawn timer
+if(this.pupCandidates.length>0){
+this.pupSpawnTimer-=dt;
+if(this.pupSpawnTimer<=0){
+this.pupSpawnTimer=20000;
+this._spawnOnePup();
+}
+}
+// ── 修复：关卡完成检测逻辑 ──
+// 只有当：1.所有普通敌人死光 2.Boss 死光 3.所有 Boss 掉落物都被捡起 时，才进入结算
+const allEnemiesDead = this.enemies.every(e => e.dead);
+const bossIsDead = !this.boss || this.boss.dead;
+const pendingDrops = this.pups.filter(p => p.isBossDrop && !p.collected);
+
+if (allEnemiesDead && bossIsDead && !this.player.dead) {
+    if (pendingDrops.length === 0) {
+        this.state = 'levelComplete';
+    }
+    // 如果还有掉落物没捡，保持 playing 状态，不切换
+}
+},
+nextLevel(){
+this.levelIdx++;
+if(this.levelIdx>=LEVELS.length){ this.showMenu(); return; }
+this.loadLevel(); this.state='playing';
+},
+draw(){
+ctx.fillStyle='#0a0a10'; ctx.fillRect(0,0,CW,CH);
+if(this.state==='menu')         { this._drawMenu(); return; }
+if(this.state==='gameOver')     { this._drawGameOver(); return; }
+if(this.state==='levelComplete'){ this._drawLevelComplete(); return; }
+// Draw game world
+Camera.apply();
+this.map.draw();
+for(const p of this.pups) p.draw();
+for(const p of particles) p.draw();
+for(const b of this.bullets) b.draw();
+for(const e of this.enemies) e.draw();
+if(this.boss&&!this.boss.dead) this.boss.draw();
+if(!this.player.dead) this.player.draw();
+Camera.restore();
+// HUD
+const bossHp=this.boss&&!this.boss.dead?this.boss.hp:null;
+const bossMax=this.boss?this.boss.maxHp:1;
+const bossName=this.boss?this.boss.bname:'';
+drawHUD(this.player,LEVELS[this.levelIdx].name,this.levelIdx,this.score,this.lives,bossHp,bossMax,bossName);
+
+// ── 修复：绘制箭头逻辑 ──
+// 只要 Boss 死了，就绘制大箭头指示玩家去捡，不管普通敌人是否还活着
+if(this.boss && this.boss.dead){
+    const pending = this.pups.filter(p => p.isBossDrop && !p.collected);
+    if(pending.length > 0) {
+        this._drawBossDropArrows(pending);
+    }
+}
+},
+_drawMenu(){
+const t=this.menuAnim;
+// Background gradient
+const bg=ctx.createRadialGradient(CW/2,CH/2,10,CW/2,CH/2,600);
+bg.addColorStop(0,'#0d2010'); bg.addColorStop(1,'#050a08');
+ctx.fillStyle=bg; ctx.fillRect(0,0,CW,CH);
+// Grid pattern
+ctx.strokeStyle='rgba(0,80,0,0.06)'; ctx.lineWidth=1;
+for(let i=0;i<CW;i+=40){ ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,CH);ctx.stroke(); }
+for(let j=0;j<CH;j+=40){ ctx.beginPath();ctx.moveTo(0,j);ctx.lineTo(CW,j);ctx.stroke(); }
+// Title
+const ty=CH/2-130;
+ctx.save();
+ctx.shadowColor='#00ff44'; ctx.shadowBlur=40;
+txtC('坦克大战',CW/2,ty,72,'#44ff66','#002200');
+ctx.restore();
+ctx.save();
+ctx.shadowColor='#88ffaa'; ctx.shadowBlur=20;
+txtC('TANK BATTLE',CW/2,ty+72,28,'#88ffaa','#001a00');
+ctx.restore();
+// Animated demo tank
+const tankY=CH/2+20;
+const tankAngle=Math.sin(t*0.001)*0.3;
+drawTankGfx(CW/2-180,tankY,Math.PI/4+tankAngle,-Math.PI/6+Math.sin(t*0.0015)*0.4,'player','laser',1.4,false);
+drawTankGfx(CW/2+180,tankY,Math.PI+Math.PI/4-tankAngle,Math.PI+0.2+Math.sin(t*0.0018)*0.3,'boss1','cannon',1.4,false);
+// Glow fight
+glowC(CW/2,tankY,80+Math.sin(t*0.003)*20,'rgba(50,200,50,0.05)');
+// Instructions
+const pulse=0.7+Math.sin(t*0.004)*0.3;
+ctx.save(); ctx.globalAlpha=pulse;
+txtC('点击屏幕开始游戏',CW/2,CH/2+160,22,'#ffee44','#000');
+ctx.restore();
+// Controls
+const cy=CH/2+205;
+txtC('WASD 移动  ·  鼠标瞄准  ·  自动开火  ·  R 提前换弹',CW/2,cy,13,'#88aa88','#000');
+txtC('拾取道具获得强力武器  ·  击杀所有敌人通关',CW/2,cy+22,13,'#88aa88','#000');
+txtC('❓ 随机变大变小：变大血量翻倍但体型巨大  变小伤害 +80% 极难被命中',CW/2,cy+40,11,'#00ffee','#000');
+ctx.save(); ctx.globalAlpha=0.75+Math.sin(t*0.003)*0.25;
+txtC('💡 按 F11 全屏游玩，体验更佳！',CW/2,cy+56,13,'#ffee66','#221100');
+ctx.restore();
+// Weapon icons
+const icons=['🔫','💥','⚡','💣','🔆','🔴','❓'];
+const wnames=['手枪','霰弹枪','机枪','大炮','激光炮','迷你枪','随机变身'];
+for(let i=0;i<icons.length;i++){
+const ix=CW/2-150+i*50, iy=cy+80;
+ctx.font='22px serif'; ctx.textAlign='center'; ctx.fillText(icons[i],ix,iy);
+txtC(wnames[i],ix,iy+22,8,'#66aa66','#000');
+}
+},
+_drawGameOver(){
+const t=this.menuAnim;
+drawBgImage(BG_IMGS[5]);
+ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(0,0,CW,CH);
+// Colorful sparkles
+for(let i=0;i<10;i++){
+const sx=CW/2+Math.sin(t*0.001*(i+1)+i*0.9)*480;
+const sy=CH/2+Math.cos(t*0.0013*(i+1)+i*1.1)*220;
+glowC(sx,sy,18+Math.sin(t*0.002+i)*10,`hsla(${(t*0.15+i*36)%360},100%,65%,0.4)`);
+}
+// Big playful text
+const hue=(t*0.08)%360;
+const wobble=Math.sin(t*0.0025)*0.07;
+const pulse=1+Math.sin(t*0.005)*0.05;
+ctx.save();
+ctx.translate(CW/2,CH/2-80);
+ctx.rotate(wobble); ctx.scale(pulse,pulse);
+ctx.font='bold 120px "Comic Sans MS",cursive,sans-serif';
+ctx.textAlign='center'; ctx.textBaseline='middle';
+ctx.lineWidth=10; ctx.strokeStyle='#000';
+ctx.strokeText('你是小笨蛋！！！',0,0);
+const tg=ctx.createLinearGradient(-560,0,560,0);
+tg.addColorStop(0,`hsl(${hue},100%,62%)`);
+tg.addColorStop(0.2,`hsl(${(hue+60)%360},100%,65%)`);
+tg.addColorStop(0.4,`hsl(${(hue+120)%360},100%,62%)`);
+tg.addColorStop(0.6,`hsl(${(hue+180)%360},100%,65%)`);
+tg.addColorStop(0.8,`hsl(${(hue+240)%360},100%,62%)`);
+tg.addColorStop(1,`hsl(${(hue+300)%360},100%,65%)`);
+ctx.fillStyle=tg; ctx.shadowColor='#ff00aa'; ctx.shadowBlur=40;
+ctx.fillText('你是小笨蛋！！！',0,0);
+ctx.restore();
+txtC(`最终得分：${this.score}`,CW/2,CH/2+32,26,'#ffcc44','#000');
+this._btnRect=drawBtn('重新开始',CW/2,CH/2+105,220,60,'rgba(160,20,80,0.92)','#ff88cc','#fff');
+},
+_drawLevelComplete(){
+const isLast=this.levelIdx>=LEVELS.length-1;
+drawBgImage(BG_IMGS[Math.min(this.levelIdx,4)]);
+ctx.fillStyle='rgba(0,0,0,0.52)'; ctx.fillRect(0,0,CW,CH);
+const ld=LEVELS[this.levelIdx];
+ctx.save();
+ctx.shadowColor=isLast?'#ffff00':'#00ff88'; ctx.shadowBlur=40;
+txtC(isLast?'🎉 恭喜通关！':'关卡完成!',CW/2,CH/2-90,58,isLast?'#ffee44':'#44ffaa','#000');
+ctx.restore();
+if(isLast){
+ctx.save();
+ctx.font='bold 32px "Comic Sans MS",cursive,sans-serif';
+ctx.textAlign='center'; ctx.textBaseline='middle';
+ctx.lineWidth=5; ctx.strokeStyle='#000'; ctx.strokeText('虽然你通关了，但你还是小笨蛋~',CW/2,CH/2-18);
+const tg2=ctx.createLinearGradient(-400,0,400,0);
+tg2.addColorStop(0,'#ff88cc'); tg2.addColorStop(0.5,'#ffee44'); tg2.addColorStop(1,'#88ffcc');
+ctx.fillStyle=tg2; ctx.shadowColor='#ffaaff'; ctx.shadowBlur=20;
+ctx.fillText('虽然你通关了，但你还是小笨蛋~',CW/2,CH/2-18);
+ctx.restore();
+} else {
+txtC(ld.name,CW/2,CH/2-18,26,'#ffee44','#000');
+}
+txtC(`得分：${this.score}`,CW/2,CH/2+38,20,'#cccccc','#000');
+this._btnRect=drawBtn(
+isLast?'返回主菜单':'下一关 →',
+CW/2, CH/2+110, 240, 60,
+isLast?'rgba(160,120,0,0.92)':'rgba(0,130,70,0.92)',
+isLast?'#ffee44':'#44ffaa',
+'#fff'
+);
+},
+_initPupCandidates(){
+const ld=LEVELS[this.levelIdx];
+const psx=ld.pStart.tx, psy=ld.pStart.ty;
+const reach=this._computeReachMask(this.player.hw,this.player.hh,this.player.x,this.player.y);
+const candidates=[];
+for(let ty=1;ty<this.map.h-1;ty++){
+for(let tx=1;tx<this.map.w-1;tx++){
+if(this.map.tiles[ty][tx]!==T) continue;
+if(!reach||!reach[ty]||!reach[ty][tx]) continue;
+const cx=(tx+0.5)*TILE,cy=(ty+0.5)*TILE;
+if(this.map.solidAt(cx,cy,this.player.hw-1,this.player.hh-1)) continue;
+if(Math.hypot(tx-psx,ty-psy)<=4) continue;
+candidates.push({tx,ty});
+}
+}
+for(let i=candidates.length-1;i>0;i--){
+const j=Math.floor(Math.random()*(i+1));
+[candidates[i],candidates[j]]=[candidates[j],candidates[i]];
+}
+this.pupCandidates=candidates;
+},
+_spawnOnePup(){
+if(this.pupCandidates.length===0) return;
+const pool=['health','health','health','shotgun','shotgun','machinegun','machinegun','cannon','laser','minigun','resize','resize'];
+const c=this.pupCandidates.pop();
+if(!c) return;
+const type=pool[Math.floor(Math.random()*pool.length)];
+const cx=(c.tx+0.5)*TILE,cy=(c.ty+0.5)*TILE;
+const reach=this._computeReachMask(this.player.hw,this.player.hh,this.player.x,this.player.y);
+const safe=this._findNearestFreeSpot(cx,cy,this.player.hw,this.player.hh,{maxR:Math.max(this.map.w,this.map.h),reach});
+const pos=safe||{x:cx,y:cy};
+this.pups.push(new PowerUp(pos.x,pos.y,type));
+},
+_dropBoss(x,y,bType){
+const weaponMap={boss1:'shotgun',boss2:'machinegun',boss3:'cannon',boss4:'minigun',boss5:'laser'};
+const weapon=weaponMap[bType]||'shotgun';
+const reach=this._computeReachMask(this.player.hw,this.player.hh,this.player.x,this.player.y);
+const maxR=Math.max(this.map.w,this.map.h);
+const p1=this._findNearestFreeSpot(x-44,y,this.player.hw,this.player.hh,{maxR,reach})
+      ||this._findNearestFreeSpot(x-44,y,this.player.hw,this.player.hh,{maxR});
+const p2=this._findNearestFreeSpot(x+44,y,this.player.hw,this.player.hh,{maxR,reach})
+      ||this._findNearestFreeSpot(x+44,y,this.player.hw,this.player.hh,{maxR});
+const wp=new PowerUp((p1?p1.x:x-44),(p1?p1.y:y),weapon); wp.isBossDrop=true; wp.collectCooldown=1500; this.pups.push(wp);
+const hp2=new PowerUp((p2?p2.x:x+44),(p2?p2.y:y),'health'); hp2.isBossDrop=true; hp2.collectCooldown=1500; this.pups.push(hp2);
+},
+_drawBossDropArrows(drops){
+const t=Date.now()*0.003;
+// Bottom hint banner
+ctx.fillStyle='rgba(0,0,0,0.72)'; ctx.fillRect(0,CH-64,CW,64);
+const pulse=0.7+Math.sin(t*2)*0.3;
+ctx.save(); ctx.globalAlpha=pulse;
+txtC('⬇  捡起 Boss 战利品才能进入下一关！  ⬇',CW/2,CH-32,20,'#ffee44','#000');
+ctx.restore();
+// World-space arrows above each drop
+Camera.apply();
+for(const drop of drops){
+const bounce=Math.sin(t*3)*12;
+// Glow ring around the drop
+ctx.save();
+ctx.globalAlpha=0.35+Math.sin(t*2)*0.2;
+ctx.strokeStyle=`hsl(${(t*80)%360},100%,60%)`;
+ctx.lineWidth=5;
+ctx.shadowColor='#ff8800'; ctx.shadowBlur=30;
+ctx.beginPath(); ctx.arc(drop.x,drop.y,38+Math.sin(t*2)*6,0,Math.PI*2); ctx.stroke();
+ctx.restore();
+// Big bouncing arrow
+ctx.save();
+ctx.font='bold 80px sans-serif';
+ctx.textAlign='center'; ctx.textBaseline='middle';
+ctx.shadowColor='#ff4400'; ctx.shadowBlur=36;
+ctx.fillStyle=`hsl(${(t*80)%360},100%,60%)`;
+ctx.fillText('↓',drop.x,drop.y-90+bounce);
+ctx.restore();
+}
+Camera.restore();
+// Screen-edge arrows for off-screen drops
+for(const drop of drops){
+const sx=drop.x-Camera.x, sy=drop.y-Camera.y;
+if(sx<20||sx>CW-20||sy<60||sy>CH-60){
+const angle=Math.atan2(sy-CH/2,sx-CW/2);
+const ex=clamp(CW/2+Math.cos(angle)*Math.min(CW,CH)*0.42,44,CW-44);
+const ey=clamp(CH/2+Math.sin(angle)*Math.min(CW,CH)*0.38,44,CH-44);
+ctx.save();
+ctx.translate(ex,ey); ctx.rotate(angle);
+ctx.font='bold 52px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+ctx.fillStyle=`hsl(${(t*80)%360},100%,60%)`; ctx.shadowColor='#ff8800'; ctx.shadowBlur=20;
+ctx.fillText('➤',0,0);
+ctx.restore();
+}
+}
+},
+loop(timestamp){
+const dt=Math.min(timestamp-this.lastTime,80);
+this.lastTime=timestamp;
+this.update(dt);
+this.draw();
+requestAnimationFrame(ts=>this.loop(ts));
+},
+start(){
+this.lastTime=performance.now();
+requestAnimationFrame(ts=>this.loop(ts));
+}
+};
+// ═══════════════════════════════════════════════════════════
+// AUDIO SYSTEM  ·  Web Audio API synthesised SFX
+// ═══════════════════════════════════════════════════════════
+const AudioSys = {
+  _ac:null, _mg:null, _tn:null, _tg:null,
+  _boot(){
+    if(this._ac) return;
+    try{
+      this._ac=new(window.AudioContext||window.webkitAudioContext)();
+      this._mg=this._ac.createGain(); this._mg.gain.value=0.68;
+      this._mg.connect(this._ac.destination);
+    }catch(e){}
+  },
+  _g(v=0){ const n=this._ac.createGain();n.gain.value=v;n.connect(this._mg);return n; },
+  _env(n,v,t,d){ n.gain.setValueAtTime(v,t);n.gain.exponentialRampToValueAtTime(0.0001,t+d); },
+  _osc(tp,fr,n,t,d,f2){
+    const o=this._ac.createOscillator();o.type=tp;o.frequency.setValueAtTime(fr,t);
+    if(f2!==undefined) o.frequency.exponentialRampToValueAtTime(Math.max(0.01,f2),t+d);
+    o.connect(n);o.start(t);o.stop(t+d+0.01);
+  },
+  _nz(vol,dur,lp,t){
+    const ns=Math.ceil(this._ac.sampleRate*dur);
+    const buf=this._ac.createBuffer(1,ns,this._ac.sampleRate);
+    const dta=buf.getChannelData(0);for(let i=0;i<ns;i++)dta[i]=Math.random()*2-1;
+    const src=this._ac.createBufferSource();src.buffer=buf;
+    const flt=this._ac.createBiquadFilter();flt.type='lowpass';flt.frequency.value=lp;
+    const gn=this._g(0);src.connect(flt);flt.connect(gn);
+    this._env(gn,vol,t,dur);src.start(t);src.stop(t+dur+0.01);
+  },
+  _p(fn){
+    this._boot();if(!this._ac)return;
+    if(this._ac.state==='suspended')this._ac.resume();
+    fn(this._ac.currentTime);
+  },
+  // ── Weapon fire sounds ──────────────────────────────────
+  shootPistol(){this._p(t=>{
+    const g=this._g(0);this._env(g,0.42,t,0.14);this._osc('square',190,g,t,0.14,44);
+    this._nz(0.20,0.09,5500,t);
+  });},
+  shootShotgun(){this._p(t=>{
+    for(let i=0;i<5;i++){const d=i*0.016;const g=this._g(0);this._env(g,0.17,t+d,0.22);this._osc('sawtooth',132+Math.random()*46,g,t+d,0.22,22);}
+    const g2=this._g(0);this._env(g2,0.62,t,0.40);this._osc('sine',86,g2,t,0.40,10);
+    this._nz(0.42,0.32,780,t);
+  });},
+  shootMachinegun(){this._p(t=>{
+    const g=this._g(0);this._env(g,0.22,t,0.09);this._osc('square',228,g,t,0.09,76);
+    this._nz(0.14,0.06,3600,t);
+  });},
+  shootCannon(){this._p(t=>{
+    const g=this._g(0);this._env(g,0.76,t,0.72);this._osc('sine',52,g,t,0.72,7);
+    this._nz(0.55,0.52,660,t);
+    const g2=this._g(0);this._env(g2,0.38,t+0.02,0.36);this._osc('sawtooth',112,g2,t+0.02,0.36,28);
+  });},
+  shootLaser(){this._p(t=>{
+    const o=this._ac.createOscillator();o.type='sawtooth';
+    o.frequency.setValueAtTime(960,t);o.frequency.linearRampToValueAtTime(320,t+0.22);
+    const flt=this._ac.createBiquadFilter();flt.type='bandpass';flt.frequency.value=660;flt.Q.value=7;
+    const g=this._g(0);this._env(g,0.28,t,0.22);
+    o.connect(flt);flt.connect(g);o.start(t);o.stop(t+0.23);
+  });},
+  shootMinigun(){this._p(t=>{
+    const g=this._g(0);this._env(g,0.18,t,0.065);this._osc('square',312,g,t,0.065,108);
+  });},
+  // ── Impact / event sounds ───────────────────────────────
+  hitMetal(){this._p(t=>{
+    const g=this._g(0);this._env(g,0.25,t,0.13);this._osc('triangle',520,g,t,0.13,160);
+    this._nz(0.13,0.08,2200,t);
+  });},
+  hitExplosion(){this._p(t=>{
+    const g=this._g(0);this._env(g,0.86,t,0.92);this._osc('sine',36,g,t,0.92,4);
+    this._nz(0.66,0.76,1500,t);
+    const g2=this._g(0);this._env(g2,0.46,t+0.05,0.62);this._osc('sine',68,g2,t+0.05,0.62,9);
+  });},
+  pickup(){this._p(t=>{
+    [523,659,784,1047].forEach((f,i)=>{
+      const d=i*0.09;const g=this._g(0);this._env(g,0.22,t+d,0.20);this._osc('sine',f,g,t+d,0.20);
+    });
+  });},
+  tankDeath(){this._p(t=>{
+    for(let i=0;i<3;i++){
+      const d=i*0.15;const g=this._g(0);this._env(g,0.70-i*0.12,t+d,0.82);
+      this._osc('sine',46+Math.random()*20,g,t+d,0.82,5);this._nz(0.50,0.62,1200,t+d);
+    }
+  });},
+  bossRoar(){this._p(t=>{
+    [110,82.4,73.4,55].forEach((f,i)=>{
+      const d=i*0.25;const g=this._g(0);this._env(g,0.40,t+d,0.32);this._osc('sawtooth',f,g,t+d,0.32);
+    });
+    this._nz(0.28,1.0,400,t);
+  });},
+  victory(){this._p(t=>{
+    [523,659,784,659,784,1047].forEach((f,i)=>{
+      const d=i*0.15;const g=this._g(0);this._env(g,0.24,t+d,0.22);this._osc('triangle',f,g,t+d,0.22);
+    });
+  });},
+  // ── Tank track rumble (looping) ─────────────────────────
+  startTrack(){
+    this._boot();if(!this._ac||this._tn)return;
+    if(this._ac.state==='suspended')this._ac.resume();
+    const sr=this._ac.sampleRate,n=Math.ceil(sr*0.6);
+    const buf=this._ac.createBuffer(1,n,sr),dta=buf.getChannelData(0);
+    const ci=Math.floor(sr*0.15);
+    for(let i=0;i<n;i++){const p=i%ci;dta[i]=(Math.random()*2-1)*0.18+(p<4?0.45:0)+Math.sin(i*0.07)*0.09;}
+    this._tn=this._ac.createBufferSource();this._tn.buffer=buf;this._tn.loop=true;
+    const flt=this._ac.createBiquadFilter();flt.type='lowpass';flt.frequency.value=185;
+    this._tg=this._ac.createGain();this._tg.gain.value=0;
+    this._tn.connect(flt);flt.connect(this._tg);this._tg.connect(this._mg);this._tn.start();
+  },
+  setTrack(v){if(this._tg)this._tg.gain.value=v*0.17;},
+  stopTrack(){if(this._tn){try{this._tn.stop();}catch(e){}this._tn=null;this._tg=null;}},
+  forWeapon(wt){
+    ({pistol:()=>this.shootPistol(),shotgun:()=>this.shootShotgun(),
+      machinegun:()=>this.shootMachinegun(),cannon:()=>this.shootCannon(),
+      laser:()=>this.shootLaser(),minigun:()=>this.shootMinigun()
+    }[wt]||(()=>this.shootPistol()))();
+  }
+};
+
+// ═══════════════════════════════════════════════════════════
+// VOICE SYSTEM  ·  Web Speech API TTS  (role-based voices)
+// ═══════════════════════════════════════════════════════════
+const VoiceSys = {
+  _vx:[], speaking:false, _pendingT:null, _zhLogged:false,
+  init(){
+    if(!window.speechSynthesis)return;
+    const load=()=>{
+      this._vx=speechSynthesis.getVoices();
+      if(this._vx.length)this._warm();
+    };
+    if(speechSynthesis.onvoiceschanged!==undefined)speechSynthesis.onvoiceschanged=load;
+    load();
+  },
+  _refreshVoices(){
+    if(!window.speechSynthesis)return this._vx;
+    const now=speechSynthesis.getVoices();
+    if(now&&now.length)this._vx=now;
+    return this._vx;
+  },
+  // Pre-warm the TTS engine: speak a silent empty utterance so the first real line
+  // doesn't suffer the cold-start latency (especially with Chrome's online voices).
+  _warm(){
+    const u=new SpeechSynthesisUtterance('\u200b');
+    u.volume=0; u.rate=2;
+    speechSynthesis.speak(u);
+  },
+  // Return best voice by role. Strongly prefer localService===true (offline / installed)
+  // voices to avoid Chrome sending every utterance to Google's network TTS server.
+  _pool(role='narrator'){
+    const voices=this._refreshVoices();
+    const zh=voices.filter(v=>v.lang&&v.lang.toLowerCase().startsWith('zh'));
+    if(!zh.length)return this._vx[0]||null;
+    const local=zh.filter(v=>v.localService===true);
+    const byName=(pool,kw)=>pool.find(v=>(v.name||'').toLowerCase().includes(kw));
+    const pickList=(pool,arr)=>{
+      for(const k of arr){
+        const hit=byName(pool,k);
+        if(hit)return hit;
+      }
+      return null;
+    };
+    // One-time visibility: print all zh voices so role routing can be verified.
+    if(!this._zhLogged){
+      this._zhLogged=true;
+      try{console.log('[VoiceSys] zh voices:',zh.map(v=>`${v.name} | ${v.lang} | local=${!!v.localService}`));}catch(e){}
+    }
+    // Prefer online/neural male Chinese voices for male roles; Kangkang as offline fallback.
+    const MALE_MAIN=['yunjian','yunxi','yunyang','yunhao','yunfeng','yunxia','kangkang'];
+    const MALE_DARK=['yunjian','yunxi','yunhao','yunyang','kangkang'];
+    const MALE_ROBOT=['yunyang','yunjian','yunxi','kangkang'];
+    const FEM_SOFT =['xiaoyi','xiaoxiao','yaoyao','huihui'];
+    if(role==='hero'){
+      return pickList(zh,MALE_MAIN)||pickList(local,['kangkang'])||zh[0]||null;
+    }
+    if(role==='villain'){
+      return pickList(zh,MALE_DARK)||pickList(local,['kangkang'])||zh[0]||null;
+    }
+    if(role==='boss'){
+      return pickList(zh,MALE_ROBOT)||pickList(local,['kangkang'])||zh[0]||null;
+    }
+    if(role==='princess'){
+      return pickList(zh,FEM_SOFT)||pickList(local,['yaoyao','huihui'])||zh[0]||null;
+    }
+    if(role==='narrator'){
+      return pickList(zh,['yunxi','yunjian','huihui'])||zh[0]||null;
+    }
+
+    const has=(s,arr)=>arr.some(k=>s.includes(k));
+    const FEM=['female','woman','girl','xiaoxiao','xiaoyi','huihui','yaoyao','xiaohan','xiaomeng','xiaomo','xiaoqiu'];
+    const MALE=['male','man','boy','yunxi','yunye','yunjian','kangkang','xiaobei','xiaotian','xiaogang','xiaoyun','jun'];
+    const DEEP=['deep','bass','baritone','yunxi','yunye','xiaogang','kangkang','gang','bo','qiang','strong'];
+    const HERO=['hero','brave','clear','yunxi','yunjian'];
+    let best=null,bestScore=-1e9;
+    const src=local.length?local:zh;
+    for(const v of src){
+      const n=`${v.name||''} ${v.voiceURI||''} ${v.lang||''}`.toLowerCase();
+      let s=0;
+      if(v.localService===true)s+=25;
+      if(n.includes('zh-cn'))s+=6;
+      if(role==='princess'){
+        if(has(n,FEM))s+=42;
+        if(has(n,MALE))s-=36;
+      }else if(role==='hero'){
+        if(has(n,MALE))s+=34;
+        if(has(n,FEM))s-=20;
+        if(has(n,HERO))s+=10;
+      }else if(role==='villain'||role==='boss'){
+        if(has(n,MALE))s+=30;
+        if(has(n,FEM))s-=32;
+        if(has(n,DEEP))s+=18;
+      }else{
+        if(has(n,MALE))s+=8;
+      }
+      if(s>bestScore){best=v;bestScore=s;}
+    }
+    return best||src[0]||zh[0]||null;
+  },
+  _stylizeText(text,role){
+    let t=(text||'').trim();
+    if(!t)return t;
+    if(role==='hero'){
+      t=t.replace(/[~～]/g,'');
+      t=t.replace(/\.{3,}/g,'。');
+      return t;
+    }
+    if(role==='princess'){
+      t=t.replace(/!/g,'~').replace(/！/g,'呀~');
+      t=t.replace(/\?+/g,'呀？').replace(/？+/g,'呀？');
+      t=t.replace(/我爱你/g,'我最爱你啦').replace(/等我/g,'等你哦');
+      if(!/[~～]$/.test(t))t+='~';
+      return t;
+    }
+    if(role==='villain'){
+      t=t.replace(/哈哈哈/g,'桀桀桀').replace(/哈哈/g,'桀桀');
+      t=t.replace(/ha ha ha/gi,'heh... heh... heh...');
+      t=t.replace(/!/g,'!!').replace(/！/g,'！！');
+      t=t.replace(/\.{3,}/g,'……');
+      return t;
+    }
+    if(role==='boss'){
+      // Mechanical / synthetic cadence for boss: chopped phrases + system-like prefix.
+      t=t.replace(/哈哈哈/g,'嘶，嘶，嘶').replace(/哈哈/g,'嘶，嘶');
+      t=t.replace(/\.{3,}/g,'……');
+      t=t.replace(/，/g,'，……').replace(/。/g,'。……');
+      t=`警告。敌对核心，已锁定。……${t}`;
+      return t;
+    }
+    return t;
+  },
+  speak(text,role='narrator',retry=0){
+    if(!window.speechSynthesis)return;
+    if(this._pendingT){clearTimeout(this._pendingT);this._pendingT=null;}
+    this._refreshVoices();
+    const needMale=(role==='hero'||role==='villain'||role==='boss');
+    const hasAnyMaleZh=this._vx.some(v=>{
+      const n=(v.name||'').toLowerCase();
+      const l=(v.lang||'').toLowerCase();
+      return l.startsWith('zh')&&(n.includes('yunjian')||n.includes('yunxi')||n.includes('yunyang')||n.includes('yunhao')||n.includes('yunfeng')||n.includes('kangkang'));
+    });
+    if((!this._vx.length||(needMale&&!hasAnyMaleZh))&&retry<20){
+        this._pendingT=setTimeout(()=>{this._pendingT=null;this.speak(text,role,retry+1);},120);
+        return;
+    }
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(this._stylizeText(text,role));
+    const v=this._pool(role);
+    if(v){
+      u.lang=v.lang||'zh-CN';
+      u.voice=v;
+      try{console.log(`[VoiceSys] role=${role} voice=${v.name} lang=${v.lang} local=${!!v.localService}`);}catch(e){}
+    }else{
+      u.lang='zh-CN';
+      try{console.log(`[VoiceSys] role=${role} voice=(none) lang=${u.lang}`);}catch(e){}
+    }
+    /* Extreme pitch/rate separation so every character sounds unmistakably different:
+       narrator  — slow measured documentary baritone
+       hero      — bright confident heroic tenor
+       princess  — very high breathless soprano, unmistakably female
+       villain   — sub-bass ultra-slow dripping menace, pure evil
+       boss      — near-floor pitch, aggressive bark                          */
+    const R={
+      narrator:{pitch:0.58,rate:0.72,vol:0.84},
+      hero:    {pitch:0.22,rate:0.84,vol:1.00},
+      princess:{pitch:1.72,rate:1.18,vol:0.95},
+      villain: {pitch:0.01,rate:0.44,vol:1.00},
+      boss:    {pitch:0.55,rate:0.82,vol:1.00},
+    };
+    const cfg=R[role]||R.narrator;
+    u.pitch=cfg.pitch;u.rate=cfg.rate;u.volume=cfg.vol;
+    this.speaking=true;
+    u.onend =()=>{this.speaking=false;};
+    u.onerror=()=>{this.speaking=false;};
+    speechSynthesis.speak(u);
+  },
+  stop(){
+    if(this._pendingT){clearTimeout(this._pendingT);this._pendingT=null;}
+    if(window.speechSynthesis)speechSynthesis.cancel();
+    this.speaking=false;
+  }
+};
+
+// ═══════════════════════════════════════════════════════════
+// DIALOGUE SYSTEM  ·  user-controlled, no auto-advance
+// ═══════════════════════════════════════════════════════════
+const DialogueSys = {
+  queue:[],cur:null,visible:false,onDone:null,
+  _SC:{narrator:'#b8c8e0',hero:'#44ff88',princess:'#ff88ee',villain:'#ff4444',boss:'#ffaa44'},
+  play(lines,onDone){
+    if(!lines||!lines.length)return;
+    this.queue=[...lines];this.onDone=onDone||null;
+    this.visible=true;this._next();
+  },
+  _next(){
+    if(!this.queue.length){
+      this.visible=false;VoiceSys.stop();
+      if(this.onDone){const f=this.onDone;this.onDone=null;f();}return;
+    }
+    this.cur=this.queue.shift();
+    const spoken=STORY_TTS_ZH[this.cur.text]||this.cur.text;
+    VoiceSys.speak(spoken,this.cur.role);
+  },
+  advance(){if(!this.visible)return false;VoiceSys.stop();this._next();return true;},
+  update(_dt){ /* no auto-advance — user controls */ },
+  draw(){
+    if(!this.visible||!this.cur)return;
+    if(typeof Game!=='undefined'&&(Game.state==='menu'||Game.state==='gameOver'))return;
+    const bw=CW-88,bh=152,bx=44,by=CH-212;
+    const col=this._SC[this.cur.role]||'#88aacc';
+    const t=Date.now()*0.006;
+    // Backdrop
+    ctx.save();
+    ctx.globalAlpha=0.95;ctx.fillStyle='#060912';
+    ctx.strokeStyle=col;ctx.lineWidth=2.5;
+    ctx.beginPath();ctx.roundRect(bx,by,bw,bh,12);ctx.fill();ctx.stroke();
+    ctx.restore();
+    // Audio wave bar (animated while speaking, flat when idle)
+    ctx.save();
+    const barCount=22, barW=Math.floor((bw-8)/barCount)-1;
+    for(let i=0;i<barCount;i++){
+      const bx2=bx+4+i*(barW+1);
+      const h=VoiceSys.speaking?2+Math.abs(Math.sin(t*3.5+i*0.62+Math.cos(t+i*0.3)*1.2))*7:2;
+      ctx.fillStyle=col+(VoiceSys.speaking?'aa':'33');
+      ctx.fillRect(bx2,by+8-h/2,barW,h);
+    }
+    ctx.restore();
+    // Speaker name  (+♪ when speaking)
+    const spkLabel=(this.cur.speaker||this.cur.role.toUpperCase())
+                   +(VoiceSys.speaking?' ♪':'');
+    ctx.save();ctx.font='bold 13px "Courier New"';ctx.textAlign='left';ctx.textBaseline='middle';
+    ctx.fillStyle=col;ctx.shadowColor=col;ctx.shadowBlur=10;
+    ctx.fillText(spkLabel,bx+16,by+24);ctx.restore();
+    // Separator line
+    ctx.strokeStyle=col+'44';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(bx+12,by+35);ctx.lineTo(bx+bw-12,by+35);ctx.stroke();
+    // Dialogue text (word-wrapped at 17 px)
+    ctx.save();ctx.font='17px "Courier New"';ctx.fillStyle='#dde8f8';
+    ctx.textAlign='left';ctx.textBaseline='top';
+    const maxW=bw-32;
+    let line='',ly=by+46;
+    for(const w of this.cur.text.split(' ')){
+      const test=line+w+' ';
+      if(ctx.measureText(test).width>maxW&&line){ctx.fillText(line.trim(),bx+16,ly);line=w+' ';ly+=26;}
+      else line=test;
+    }
+    if(line)ctx.fillText(line.trim(),bx+16,ly);
+    ctx.restore();
+    // Continue / skip prompt  (always visible, pulse while speaking → "skip")
+    const pulse=0.55+Math.sin(t*2.8)*0.45;
+    ctx.save();ctx.globalAlpha=pulse;
+    const hintTxt=VoiceSys.speaking
+      ?'SPACE / Click  ✕  skip voice'
+      :'SPACE / Click  ▶  continue';
+    txtC(hintTxt,CW-160,by+bh-17,12,col,'#000');
+    ctx.restore();
+  }
+};
+
+// ═══════════════════════════════════════════════════════════
+// AUDIO + STORY PATCHES
+// ═══════════════════════════════════════════════════════════
+(()=>{
+  // ── Player fire → weapon sound ──────────────────────────
+  const _pFire=Player.prototype._fire;
+  Player.prototype._fire=function(bullets){
+    _pFire.call(this,bullets);AudioSys.forWeapon(this.wType);
+  };
+  // ── Player laser → throttled laser sound ────────────────
+  const _pFL=Player.prototype._fireLaser;
+  Player.prototype._fireLaser=function(dt,map,enemies){
+    _pFL.call(this,dt,map,enemies);
+    if(!this._lsCD)this._lsCD=0;
+    this._lsCD-=dt;
+    if(this._lsCD<=0){this._lsCD=220;AudioSys.shootLaser();}
+  };
+  // ── Any tank takes damage → metallic hit sound ──────────
+  const _takeDmg=TankEntity.prototype.takeDmg;
+  TankEntity.prototype.takeDmg=function(amount,ka=0,kb=0){
+    if(this.invT>0){_takeDmg.call(this,amount,ka,kb);return;}
+    const wasAlive=this.hp>0;
+    _takeDmg.call(this,amount,ka,kb);
+    if(wasAlive&&amount>0){
+      const now=Date.now();
+      if(!this._hitST||now-this._hitST>140){this._hitST=now;AudioSys.hitMetal();}
+    }
+  };
+  // ── Tank death → big explosion sound ────────────────────
+  const _onDeath=TankEntity.prototype.onDeath;
+  TankEntity.prototype.onDeath=function(){
+    if(!this.dead)AudioSys.tankDeath();
+    _onDeath.call(this);
+  };
+  // ── Cannon/explosive bullet hit → extra boom ────────────
+  const _bDie=Bullet.prototype.die;
+  Bullet.prototype.die=function(hitEntity,map,tx,ty){
+    _bDie.call(this,hitEntity,map,tx,ty);
+    if(this.expl)AudioSys.hitExplosion();
+  };
+  // ── PowerUp pickup → chime ───────────────────────────────
+  const _collect=Player.prototype.collect;
+  Player.prototype.collect=function(pup){
+    _collect.call(this,pup);AudioSys.pickup();
+  };
+
+  // ── Game.init → boot audio + voice systems ───────────────
+  const _gInit=Game.init.bind(Game);
+  Game.init=function(){
+    _gInit();
+    VoiceSys.init();
+    const boot=()=>{AudioSys._boot();document.removeEventListener('click',boot);document.removeEventListener('keydown',boot);};
+    document.addEventListener('click',boot);
+    document.addEventListener('keydown',boot);
+    // dialogue click on canvas during 'playing' state
+    canvas.addEventListener('click',()=>{if(DialogueSys.visible)DialogueSys.advance();});
+  };
+
+  // ── Game.loadLevel → story flags + opening dialogue ──────
+  const _gLL=Game.loadLevel.bind(Game);
+  Game.loadLevel=function(){
+    _gLL();
+    AudioSys.stopTrack();
+    DialogueSys.visible=false;VoiceSys.stop();
+    this._sf={openingDone:false,bossIntroDone:false,bossDefeatedDone:false};
+    const sd=STORY_DATA[this.levelIdx];
+    if(sd&&sd.opening)setTimeout(()=>{DialogueSys.play(sd.opening);},300);
+  };
+
+  // ── Game.update → story triggers + track rumble ──────────
+  const _gUpd=Game.update.bind(Game);
+  Game.update=function(dt){
+    _gUpd(dt);
+    DialogueSys.update(dt);
+    if(this.state!=='playing'||!this.player||!this.map)return;
+    const sd=STORY_DATA[this.levelIdx],sf=this._sf;
+    if(sd&&sf){
+      // Boss-intro trigger: player comes within range of boss
+      if(!sf.bossIntroDone&&this.boss&&!this.boss.dead&&!this.player.dead){
+        const d=Math.hypot(this.player.x-this.boss.x,this.player.y-this.boss.y);
+        if(d<500){
+          sf.bossIntroDone=true;AudioSys.bossRoar();
+          setTimeout(()=>{DialogueSys.play(sd.bossIntro);},600);
+        }
+      }
+      // Boss-defeated trigger
+      if(!sf.bossDefeatedDone&&this.boss&&this.boss.dead&&this.bossHandled){
+        sf.bossDefeatedDone=true;AudioSys.victory();
+        setTimeout(()=>{DialogueSys.play(sd.bossDefeated);},1600);
+      }
+    }
+    // Tank track rumble: follow player movement
+    const k=Input.keys;
+    const mv=k['w']||k['s']||k['a']||k['d']||k['arrowup']||k['arrowdown']||k['arrowleft']||k['arrowright'];
+    if(mv&&!this.player.dead){if(!AudioSys._tn)AudioSys.startTrack();AudioSys.setTrack(1);}
+    else AudioSys.setTrack(0);
+  };
+
+  // ── Game.draw → dialogue overlay ────────────────────────
+  const _gDrw=Game.draw.bind(Game);
+  Game.draw=function(){_gDrw();DialogueSys.draw();};
+})();
+
+// ═══════════════════════════════════════════════════════════
+// KEYBOARD SHORTCUTS
+// ═══════════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+if((e.key==='Enter'||e.key===' ')&&DialogueSys.visible){DialogueSys.advance();e.preventDefault();return;}
+if(e.key==='Enter'||e.key===' '){
+if(Game.state==='menu') Game.startGame();
+else if(Game.state==='gameOver') Game.startGame();
+else if(Game.state==='levelComplete'){
+if(Game.levelIdx>=LEVELS.length-1) Game.showMenu();
+else Game.nextLevel();
+}
+}
+if(e.key==='Escape'||e.key.toLowerCase()==='p'){
+if(Game.state==='playing') Game.state='pause';
+else if(Game.state==='pause') Game.state='playing';
+}
+if(e.key.toLowerCase()==='r'){
+if(Game.state==='playing'&&Game.player&&!Game.player.dead&&!Game.player.reloading&&!Game.player.w.isLaser&&Game.player.ammo<Game.player.w.mag)
+Game.player._startReload();
+}
+});
+// Draw pause screen on top
+const _origDraw=Game.draw.bind(Game);
+Game.draw=function(){
+_origDraw();
+if(this.state==='pause'){
+ctx.fillStyle='rgba(0,0,0,0.7)'; ctx.fillRect(0,0,CW,CH);
+txtC('游戏暂停',CW/2,CH/2-20,50,'#88ccff','#000');
+txtC('按 P 或 ESC 继续',CW/2,CH/2+40,22,'#aaaaaa','#000');
+}
+};
+const _origUpdate=Game.update.bind(Game);
+Game.update=function(dt){
+if(this.state==='pause') return;
+_origUpdate(dt);
+};
+// ═══════════════════════════════════════════════════════════
+// START
+// ═══════════════════════════════════════════════════════════
+Game.init();
+Game.start();
+</script>
+</body>
+</html>
